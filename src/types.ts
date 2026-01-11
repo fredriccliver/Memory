@@ -4,17 +4,20 @@
 
 /**
  * Memory node representing a piece of information
+ *
+ * Memory는 Node로 저장되며, `outgoingEdges` 배열을 통해 Graph 구조를 형성합니다.
+ * 별도의 Relationship 엔티티 없이 Node 자체에 연결 정보를 포함합니다.
  */
 export interface Memory {
   /** Unique identifier for the memory */
   id: string;
   /** Content of the memory (natural language text) */
   content: string;
-  /** ID of the persona/entity this memory belongs to */
-  personaId: string;
+  /** ID of the entity this memory belongs to (e.g., persona, user, etc.) */
+  entityId: string;
   /** Embedding vector for similarity search */
   embedding?: number[];
-  /** Outgoing edges to related memories (graph structure) */
+  /** Outgoing edges to related memories (graph structure) - Array of memory IDs */
   outgoingEdges: string[];
   /** Metadata for the memory */
   metadata?: Record<string, unknown>;
@@ -25,27 +28,13 @@ export interface Memory {
 }
 
 /**
- * Relationship between memories
- */
-export interface Relationship {
-  /** Source memory ID */
-  from: string;
-  /** Target memory ID */
-  to: string;
-  /** Relationship type (optional, for future use) */
-  type?: string;
-}
-
-/**
  * Augmentation data for memory generation
  */
 export interface AugmentationData {
   /** Vector search results */
   vectorMemories: Memory[];
-  /** Graph traversal results */
+  /** Graph traversal results (found by following outgoingEdges) */
   graphMemories: Memory[];
-  /** Existing relationships */
-  relationships: Relationship[];
 }
 
 /**
@@ -69,8 +58,8 @@ export interface ConversationContext {
     role: 'user' | 'assistant' | 'system';
     content: string;
   }>;
-  /** Current persona ID */
-  personaId: string;
+  /** Current entity ID (e.g., persona, user, etc.) */
+  entityId: string;
   /** Additional context */
   metadata?: Record<string, unknown>;
 }

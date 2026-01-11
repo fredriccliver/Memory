@@ -4,10 +4,9 @@ Memory Infrastructure Layer - Vector/Graph based memory search and generation sy
 
 ## Overview
 
-`@openaikits/memory` is a reusable package that provides memory infrastructure capabilities for AI applications. It supports:
+`@openaikits/memory` is a reusable package that provides memory infrastructure capabilities for AI applications. It provides:
 
-- **Vector Search**: Semantic similarity search using embeddings
-- **Graph RAG**: Relationship-based memory traversal
+- **Hybrid Memory Search**: Unified memory structure combining vector embeddings and graph relationships. Each memory node contains both semantic embeddings for similarity search and graph edges for relationship traversal, enabling a two-phase search strategy: vector search for initial discovery, followed by graph traversal to find connected memories.
 - **Dynamic Memory Generation**: AI-powered memory creation with consistency validation
 - **Adapter Pattern**: Pluggable database and AI model adapters
 

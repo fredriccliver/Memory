@@ -5,7 +5,7 @@
  * Implementations can use any database (PostgreSQL, Supabase, etc.)
  */
 
-import type { Memory, Relationship } from '../types';
+import type { Memory } from '../types';
 
 /**
  * Database adapter interface for memory operations
@@ -50,25 +50,25 @@ export interface MemoryStorageAdapter {
   deleteMemory(memoryId: string): Promise<boolean>;
 
   /**
-   * Get all memories for a persona
+   * Get all memories for an entity
    *
-   * @param personaId - Persona ID
+   * @param entityId - Entity ID (e.g., persona, user, etc.)
    * @returns Array of memories
    */
-  getMemoriesByPersona(personaId: string): Promise<Memory[]>;
+  getMemoriesByEntity(entityId: string): Promise<Memory[]>;
 
   /**
    * Search memories by vector similarity
    *
    * @param embedding - Query embedding vector
-   * @param personaId - Persona ID to filter by
+   * @param entityId - Entity ID to filter by
    * @param limit - Maximum number of results
    * @param threshold - Similarity threshold (0-1)
    * @returns Array of memories sorted by similarity
    */
   searchByVector(
     embedding: number[],
-    personaId: string,
+    entityId: string,
     limit?: number,
     threshold?: number,
   ): Promise<Memory[]>;
@@ -76,28 +76,25 @@ export interface MemoryStorageAdapter {
   /**
    * Get memories connected via graph edges
    *
+   * Traverses the graph by following `outgoingEdges` from the starting memory.
+   *
    * @param memoryId - Starting memory ID
-   * @param depth - Traversal depth
+   * @param depth - Traversal depth (default: 1)
    * @returns Array of connected memories
    */
   getConnectedMemories(memoryId: string, depth?: number): Promise<Memory[]>;
 
   /**
-   * Create a relationship between memories
+   * Update memory's outgoing edges
    *
-   * @param relationship - Relationship to create
-   * @returns Created relationship
-   */
-  createRelationship(relationship: Relationship): Promise<Relationship>;
-
-  /**
-   * Delete a relationship
+   * Updates the `outgoingEdges` array of a memory to establish or remove connections.
+   * This is the primary way to manage relationships between memories.
    *
-   * @param from - Source memory ID
-   * @param to - Target memory ID
-   * @returns Whether the deletion was successful
+   * @param memoryId - Memory ID to update
+   * @param outgoingEdges - New array of connected memory IDs
+   * @returns Updated memory
    */
-  deleteRelationship(from: string, to: string): Promise<boolean>;
+  updateOutgoingEdges(memoryId: string, outgoingEdges: string[]): Promise<Memory>;
 
   /**
    * Update memory embedding
