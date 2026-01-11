@@ -1,0 +1,38 @@
+{
+  "name": "@openaikits/memory",
+  "version": "0.1.0",
+  "description": "Memory Infrastructure Layer - Vector/Graph based memory search and generation system",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "memory",
+    "vector-search",
+    "graph-rag",
+    "llm",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5"
+  },
+  "peerDependencies": {}
+}
