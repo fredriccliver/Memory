@@ -15,14 +15,27 @@ export * from './types';
 export * from './adapters/database-adapter';
 export * from './adapters/ai-adapter';
 
-// Memory components will be exported here as they are implemented
-// export * from './memory/generator';
-// export * from './memory/storage';
-// export * from './memory/connector';
+// Storage types and initialization
+export * from './storage/storage-types';
+export { Memory, memory } from './memory';
+export { MemoryStorage } from './memory/storage';
+export type { CreateMemoryOptions } from './memory/storage';
 
-// Vector components will be exported here as they are implemented
+// Memory components
+export { MemoryConnector } from './memory/connector';
+export type {
+  MemoryConnectorConfig,
+  MemoryContext,
+  CreateMemoryOptions as ConnectorCreateMemoryOptions,
+  ContextChangeCallback,
+  ChattingManager,
+} from './memory/connector';
+// export * from './memory/generator';
+
+// Vector components
+export * from './vector/embedding-service';
+export * from './vector/openai-adapter';
 // export * from './vector/search-engine';
-// export * from './vector/embedding-service';
 
 // Graph components will be exported here as they are implemented
 // export * from './graph/relationship-engine';
