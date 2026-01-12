@@ -19,8 +19,8 @@ export interface Memory {
   embedding?: number[];
   /** Outgoing edges to related memories (graph structure) - Array of memory IDs */
   outgoingEdges: string[];
-  /** Metadata for the memory */
-  metadata?: Record<string, unknown>;
+  /** Similarity score (0-1) when returned from vector search */
+  similarity?: number;
   /** Creation timestamp */
   createdAt: Date;
   /** Last update timestamp */

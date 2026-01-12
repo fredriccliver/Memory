@@ -83,7 +83,6 @@ interface Memory {
   entityId: string; // Entity this memory belongs to
   embedding?: number[]; // Vector for similarity search
   outgoingEdges: string[]; // Connected memory IDs (graph structure)
-  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -165,7 +164,6 @@ The core `Memory` interface represents a single memory node:
 - **`entityId`**: Generic entity identifier (e.g., `user`, `persona`, `workspace`, `agent`)
 - **`embedding`**: Optional vector embedding for similarity search
 - **`outgoingEdges`**: Array of connected memory IDs (graph structure)
-- **`metadata`**: Optional additional metadata
 - **`createdAt`** / **`updatedAt`**: Timestamps
 
 ### Graph Structure
