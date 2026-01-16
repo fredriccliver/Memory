@@ -11,29 +11,18 @@
  * 설치: pnpm add @langchain/core @langchain/openai
  */
 
+// 환경 변수 로드
+// 패키지 독립성을 위해 현재 작업 디렉토리 기준으로 .env 파일을 찾습니다
+// 실행 시 환경 변수를 직접 전달하거나, 예제 디렉토리에 .env 파일을 생성하세요
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Memory, StorageType, OpenAIAdapter, MemoryConnector } from '../src/index';
 
-// LangChain 라이브러리 import (선택적 - 런타임에 확인)
-let ChatOpenAI: any;
-let HumanMessage: any;
-let SystemMessage: any;
-let RunnableSequence: any;
-
-try {
-  // LangChain 라이브러리 동적 import
-  const langchainOpenAI = require('@langchain/openai');
-  const langchainCore = require('@langchain/core');
-  ChatOpenAI = langchainOpenAI.ChatOpenAI;
-  HumanMessage = langchainCore.messages.HumanMessage;
-  SystemMessage = langchainCore.messages.SystemMessage;
-  RunnableSequence = langchainCore.runnables.RunnableSequence;
-} catch (error) {
-  console.error(
-    '❌ LangChain 라이브러리가 설치되지 않았습니다.\n' +
-      '설치: pnpm add @langchain/core @langchain/openai\n',
-  );
-  throw error;
-}
+// LangChain 라이브러리 import
+import { ChatOpenAI } from '@langchain/openai';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { RunnableSequence } from '@langchain/core/runnables';
 
 /**
  * LangChain chain을 래핑하여 Memory Connector와 통합
@@ -67,16 +56,26 @@ class MemoryAwareLangChainChain {
     // Memory Connector를 통해 컨텍스트 가져오기
     const context = await this.connector.getContext(lastMessage);
 
+    // 디버그: 검색된 Memory 정보 출력
+    console.log(`\n📚 검색된 Memory: ${context.memories.length}개`);
+    if (context.memories.length > 0) {
+      context.memories.forEach((memory, index) => {
+        console.log(`   [${index + 1}] ${memory.content}`);
+      });
+    }
+
     // System prompt에 메모리 컨텍스트 추가
     const systemPrompt = `당신은 친절한 AI 어시스턴트입니다.\n\n${context.template}`;
+
+    // 디버그: System Prompt에 포함된 Memory 컨텍스트 출력
+    console.log(`\n💬 System Prompt에 포함된 Memory 컨텍스트:`);
+    console.log(`   ${context.template.split('\n').join('\n   ')}`);
 
     // LangChain 메시지 구성
     const messages = [new SystemMessage(systemPrompt), new HumanMessage(lastMessage)];
 
-    // LangChain chain 호출
-    const response = await this.chain.invoke({
-      messages,
-    });
+    // LangChain chain 호출 (메시지 배열을 직접 전달)
+    const response = await this.chain.invoke(messages);
 
     const responseContent =
       typeof response === 'string' ? response : response.content || JSON.stringify(response);
@@ -117,7 +116,8 @@ async function main() {
       connectionString:
         process.env.MEMORY_DATABASE_URL ||
         'postgresql://postgres:postgres@localhost:54332/postgres',
-      schema: 'public',
+      // schema는 생략 가능 (기본값: 'memory' - Application Layer와 자동 분리)
+      schema: 'memory', // 명시적으로 지정 (생략해도 기본값 'memory' 사용)
     },
     {
       aiAdapter,
@@ -153,12 +153,32 @@ async function main() {
   await storage.updateOutgoingEdges(memory2.id, [memory3.id]);
   console.log('✅ 테스트 Memory 생성 완료\n');
 
+  // 디버그: 직접 검색 테스트 (threshold를 점진적으로 낮춰가며 테스트)
+  console.log('🔍 직접 검색 테스트...');
+  const testQuery = '어디서 일하세요?';
+  console.log(`   쿼리: "${testQuery}"`);
+
+  // threshold를 점진적으로 낮춰가며 테스트
+  for (const threshold of [0.7, 0.5, 0.3, 0.1, 0.0]) {
+    const results = await storage.searchByQuery(testQuery, entityId, 5, threshold);
+    console.log(`   threshold ${threshold}: ${results.length}개 검색`);
+    if (results.length > 0) {
+      results.forEach((mem, idx) => {
+        console.log(
+          `      [${idx + 1}] 유사도: ${mem.similarity?.toFixed(3) || 'N/A'}, 내용: ${mem.content}`,
+        );
+      });
+      break;
+    }
+  }
+  console.log('');
+
   // 3. Memory Connector 생성 및 설정
   console.log('🔌 Memory Connector 설정 중...');
   const connector = new MemoryConnector(storage, {
     entityId,
     maxMemoryCount: 10,
-    similarityThreshold: 0.7,
+    similarityThreshold: 0.2, // threshold를 낮춰서 더 많은 Memory 검색 (실제 사용 시 0.5-0.7 권장)
     chainDepth: 2,
     mode: 'read-write',
   });
