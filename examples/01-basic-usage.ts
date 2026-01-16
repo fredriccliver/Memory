@@ -8,17 +8,11 @@
  * 4. Graph 연결 및 탐색
  */
 
-// 환경 변수 로드 (dotenv 사용)
+// 환경 변수 로드
+// 패키지 독립성을 위해 현재 작업 디렉토리 기준으로 .env 파일을 찾습니다
+// 실행 시 환경 변수를 직접 전달하거나, 예제 디렉토리에 .env 파일을 생성하세요
 import { config } from 'dotenv';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-// ESM에서 __dirname 대체
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// 패키지 내부의 .env.local 파일만 로드 (독립적인 패키지이므로)
-config({ path: resolve(__dirname, '../.env.local') });
+config();
 
 import { Memory, StorageType, OpenAIAdapter } from '../src/index';
 
@@ -46,7 +40,8 @@ async function main() {
         connectionString:
           process.env.MEMORY_DATABASE_URL ||
           'postgresql://postgres:postgres@localhost:54332/postgres',
-        schema: 'memory', // 별도 스키마 사용 (Application Layer와 분리)
+        // schema는 생략 가능 (기본값: 'memory' - Application Layer와 자동 분리)
+        schema: 'memory', // 명시적으로 지정 (생략해도 기본값 'memory' 사용)
       },
       {
         aiAdapter, // Embedding 자동 생성을 위해 제공

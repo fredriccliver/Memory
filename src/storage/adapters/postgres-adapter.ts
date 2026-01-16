@@ -35,7 +35,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
    */
   async initialize(): Promise<void> {
     this.client = await initDatabase(this.config);
-    await ensureTablesExist(this.client, this.config.schema || 'public');
+    await ensureTablesExist(this.client, this.config.schema || 'memory');
   }
 
   /**
@@ -48,7 +48,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   async createMemory(memory: Omit<Memory, 'id' | 'createdAt' | 'updatedAt'>): Promise<Memory> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const query = `
       INSERT INTO ${schema}.memories (
         entity_id,
@@ -85,7 +85,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   async getMemory(memoryId: string): Promise<Memory | null> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const query = `
       SELECT * FROM ${schema}.memories
       WHERE id = $1
@@ -104,7 +104,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     memoryId: string,
     updates: Partial<Omit<Memory, 'id' | 'createdAt'>>,
   ): Promise<Memory> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const setClauses: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -150,7 +150,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   async deleteMemory(memoryId: string): Promise<boolean> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const query = `
       DELETE FROM ${schema}.memories
       WHERE id = $1
@@ -161,7 +161,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   async getMemoriesByEntity(entityId: string): Promise<Memory[]> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const query = `
       SELECT * FROM ${schema}.memories
       WHERE entity_id = $1
@@ -178,7 +178,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     limit: number = 10,
     threshold: number = 0.7,
   ): Promise<Memory[]> {
-    const schema = this.config.schema || 'public';
+    const schema = this.config.schema || 'memory';
     const query = `
       SELECT *, 1 - (embedding <=> $1::vector) as similarity
       FROM ${schema}.memories

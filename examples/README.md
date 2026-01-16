@@ -22,21 +22,28 @@
 
 1. 환경 변수 설정
 
-패키지 루트 디렉토리(`packages/memory/`)에 `.env.local` 파일을 생성하세요:
+패키지 루트 디렉토리(`packages/memory/`)에 `.env` 파일을 생성하세요:
 
 ```bash
-# packages/memory/.env.local
-MEMORY_DATABASE_URL=postgresql://postgres:postgres@localhost:54332/postgres
-OPENAI_API_KEY=your_openai_api_key
+# 패키지 루트 디렉토리로 이동
+cd packages/memory
+
+# 예제 디렉토리의 .env.example을 복사
+cp examples/.env.example .env
+
+# .env 파일을 편집하여 실제 값으로 업데이트
+# OPENAI_API_KEY=your_actual_api_key
+# MEMORY_DATABASE_URL=your_actual_database_url
 ```
 
-또는 `.env.example` 파일을 복사하여 사용할 수 있습니다:
+또는 환경 변수를 직접 전달할 수 있습니다:
 
 ```bash
 cd packages/memory
-cp .env.example .env.local
-# .env.local 파일을 편집하여 실제 값으로 업데이트
+OPENAI_API_KEY=your_key MEMORY_DATABASE_URL=your_url npx tsx examples/01-basic-usage.ts
 ```
+
+**참고**: 예제는 패키지 독립성을 위해 현재 작업 디렉토리(`packages/memory/`) 기준으로 `.env` 파일을 찾습니다. 프로젝트 루트의 `.env.local`을 직접 참조하지 않습니다.
 
 2. Supabase 로컬 실행 (또는 프로덕션 DB 사용)
 
