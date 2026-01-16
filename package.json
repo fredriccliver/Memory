@@ -31,6 +31,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@langchain/core": "^1.1.15",
+    "@langchain/openai": "^1.2.2",
     "pg": "^8.11.3",
     "pgvector": "^0.2.1"
   },
