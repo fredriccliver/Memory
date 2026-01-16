@@ -36,10 +36,10 @@ export async function initDatabase(config: PostgresStorageConfig): Promise<any> 
  * Ensures required tables and extensions exist
  *
  * @param client - PostgreSQL client instance
- * @param schema - Schema name (default: 'public')
+ * @param schema - Schema name (default: 'memory' - recommended to separate from Application Layer)
  * @throws Error if initialization fails
  */
-export async function ensureTablesExist(client: any, schema: string = 'public'): Promise<void> {
+export async function ensureTablesExist(client: any, schema: string = 'memory'): Promise<void> {
   // Enable pgvector extension
   await client.query('CREATE EXTENSION IF NOT EXISTS vector');
 

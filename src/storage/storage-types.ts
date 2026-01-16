@@ -36,7 +36,7 @@ export interface PostgresStorageConfig extends BaseStorageConfig {
   type: StorageType.POSTGRES;
   /** PostgreSQL connection string (e.g., postgresql://user:password@host:port/database) */
   connectionString: string;
-  /** Schema name (default: 'public') */
+  /** Schema name (default: 'memory' - recommended to separate from Application Layer) */
   schema?: string;
   /** Whether to run migrations automatically on initialization */
   autoMigrate?: boolean;
