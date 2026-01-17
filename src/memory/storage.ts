@@ -184,6 +184,25 @@ export class MemoryStorage {
   }
 
   /**
+   * Get memories connected via graph edges from multiple starting points
+   *
+   * More efficient than calling getConnectedMemories multiple times.
+   * Returns all connected memories without duplicates.
+   *
+   * @param memoryIds - Array of starting memory IDs
+   * @param depth - Traversal depth (default: 1)
+   * @returns Array of connected memories (no duplicates, excludes starting memories)
+   *
+   * @public
+   */
+  async getConnectedMemoriesFromMultiple(
+    memoryIds: string[],
+    depth: number = 1,
+  ): Promise<Memory[]> {
+    return this.adapter.getConnectedMemoriesFromMultiple(memoryIds, depth);
+  }
+
+  /**
    * Update memory's outgoing edges
    *
    * @param memoryId - Memory ID to update

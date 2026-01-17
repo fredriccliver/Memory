@@ -118,4 +118,140 @@ export async function ensureTablesExist(client: any, schema: string = 'memory'):
     END;
     $$;
   `);
+
+  // Create graph traversal function using recursive CTE
+  // This function handles a single starting memory
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${schema}.get_connected_memories(
+      start_memory_id UUID,
+      max_depth INT DEFAULT 1
+    )
+    RETURNS TABLE (
+      id UUID,
+      entity_id TEXT,
+      content TEXT,
+      embedding VECTOR(1536),
+      outgoing_edges UUID[],
+      created_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ,
+      depth INT
+    )
+    LANGUAGE sql
+    STABLE
+    AS $$
+      WITH RECURSIVE memory_tree AS (
+        -- Base case: starting memory (depth 0, but we exclude it from results)
+        SELECT
+          m.id,
+          m.entity_id,
+          m.content,
+          m.embedding,
+          m.outgoing_edges,
+          m.created_at,
+          m.updated_at,
+          0 AS depth,
+          ARRAY[m.id] AS visited_path
+        FROM ${schema}.memories m
+        WHERE m.id = start_memory_id
+
+        UNION ALL
+
+        -- Recursive case: follow outgoing_edges
+        SELECT
+          m.id,
+          m.entity_id,
+          m.content,
+          m.embedding,
+          m.outgoing_edges,
+          m.created_at,
+          m.updated_at,
+          mt.depth + 1 AS depth,
+          mt.visited_path || m.id AS visited_path
+        FROM ${schema}.memories m
+        INNER JOIN memory_tree mt ON m.id = ANY(mt.outgoing_edges)
+        WHERE mt.depth < max_depth
+          AND NOT (m.id = ANY(mt.visited_path))
+      )
+      SELECT DISTINCT ON (mt.id)
+        mt.id,
+        mt.entity_id,
+        mt.content,
+        mt.embedding,
+        mt.outgoing_edges,
+        mt.created_at,
+        mt.updated_at,
+        mt.depth
+      FROM memory_tree mt
+      WHERE mt.depth > 0
+      ORDER BY mt.id, mt.depth ASC;
+    $$;
+  `);
+
+  // Create function to get connected memories from multiple starting points without duplicates
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${schema}.get_connected_memories_from_multiple(
+      start_memory_ids UUID[],
+      max_depth INT DEFAULT 1
+    )
+    RETURNS TABLE (
+      id UUID,
+      entity_id TEXT,
+      content TEXT,
+      embedding VECTOR(1536),
+      outgoing_edges UUID[],
+      created_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ,
+      depth INT
+    )
+    LANGUAGE sql
+    STABLE
+    AS $$
+      WITH RECURSIVE memory_tree AS (
+        -- Base case: all starting memories (depth 0, but we exclude them from results)
+        SELECT
+          m.id,
+          m.entity_id,
+          m.content,
+          m.embedding,
+          m.outgoing_edges,
+          m.created_at,
+          m.updated_at,
+          0 AS depth,
+          ARRAY[m.id] AS visited_path
+        FROM ${schema}.memories m
+        WHERE m.id = ANY(start_memory_ids)
+
+        UNION ALL
+
+        -- Recursive case: follow outgoing_edges
+        SELECT
+          m.id,
+          m.entity_id,
+          m.content,
+          m.embedding,
+          m.outgoing_edges,
+          m.created_at,
+          m.updated_at,
+          mt.depth + 1 AS depth,
+          mt.visited_path || m.id AS visited_path
+        FROM ${schema}.memories m
+        INNER JOIN memory_tree mt ON m.id = ANY(mt.outgoing_edges)
+        WHERE mt.depth < max_depth
+          AND NOT (m.id = ANY(mt.visited_path))
+      )
+      SELECT DISTINCT ON (mt.id)
+        mt.id,
+        mt.entity_id,
+        mt.content,
+        mt.embedding,
+        mt.outgoing_edges,
+        mt.created_at,
+        mt.updated_at,
+        mt.depth
+      FROM memory_tree mt
+      WHERE mt.depth > 0
+        AND NOT (mt.id = ANY(start_memory_ids))
+      ORDER BY mt.id, mt.depth ASC;
+    $$;
+  `);
 }

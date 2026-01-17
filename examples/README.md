@@ -16,6 +16,15 @@
 - 자동 Memory 검색 및 컨텍스트 구성
 - 대화 시뮬레이션
 
+### 3. `03-generator-test.ts` - DynamicMemoryGenerator 테스트
+
+- DynamicMemoryGenerator 초기화
+- collectAugmentation() 메서드 테스트
+- Vector 검색 결과 수집
+- Graph 탐색 결과 수집 (BFS)
+- 기존 관계 수집
+- Edge case 테스트
+
 ## 실행 방법
 
 ### 사전 준비
@@ -66,6 +75,9 @@ npx tsx examples/01-basic-usage.ts
 
 # LangChain 샘플
 npx tsx examples/02-langchain-sample.ts
+
+# DynamicMemoryGenerator 테스트
+npx tsx examples/03-generator-test.ts
 ```
 
 ## 의존성

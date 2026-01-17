@@ -85,6 +85,18 @@ export interface MemoryStorageAdapter {
   getConnectedMemories(memoryId: string, depth?: number): Promise<Memory[]>;
 
   /**
+   * Get memories connected via graph edges from multiple starting points
+   *
+   * Traverses the graph from multiple starting memories and returns all connected memories
+   * without duplicates. More efficient than calling getConnectedMemories multiple times.
+   *
+   * @param memoryIds - Array of starting memory IDs
+   * @param depth - Traversal depth (default: 1)
+   * @returns Array of connected memories (no duplicates, excludes starting memories)
+   */
+  getConnectedMemoriesFromMultiple(memoryIds: string[], depth?: number): Promise<Memory[]>;
+
+  /**
    * Update memory's outgoing edges
    *
    * Updates the `outgoingEdges` array of a memory to establish or remove connections.

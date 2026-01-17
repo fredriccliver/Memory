@@ -101,6 +101,31 @@ interface Memory {
 - `workspace` - Team or workspace shared memories
 - `agent` - AI agent memories
 
+### Examples
+
+실제 사용 예제는 [`examples/`](./examples/) 디렉토리에서 확인할 수 있습니다.
+
+**예제 목록**:
+
+1. **`01-basic-usage.ts`** - 가장 간단한 사용 예제
+   - Memory Storage 초기화
+   - Memory 생성 및 검색
+   - Embedding 자동 생성
+
+2. **`02-langchain-sample.ts`** - LangChain 통합 샘플
+   - LangChain chain과 Memory Connector 연결
+   - 자동 Memory 검색 및 컨텍스트 구성
+   - 대화 시뮬레이션
+
+3. **`03-generator-test.ts`** - DynamicMemoryGenerator 테스트
+   - DynamicMemoryGenerator 초기화
+   - collectAugmentation() 메서드 테스트
+   - Vector 검색 결과 수집
+   - Graph 탐색 결과 수집 (BFS)
+   - 기존 관계 수집
+
+자세한 실행 방법과 환경 설정은 [examples/README.md](./examples/README.md)를 참고하세요.
+
 ## Package Structure
 
 ```
@@ -115,6 +140,11 @@ packages/memory/
 │   ├── graph/                # Graph traversal components (to be implemented)
 │   ├── memory/               # Memory management components (to be implemented)
 │   └── tools/                # AI tool definitions (to be implemented)
+├── examples/                 # Usage examples
+│   ├── README.md             # Examples documentation
+│   ├── 01-basic-usage.ts     # Basic usage example
+│   ├── 02-langchain-sample.ts # LangChain integration example
+│   └── 03-generator-test.ts  # DynamicMemoryGenerator test
 └── README.md
 ```
 
