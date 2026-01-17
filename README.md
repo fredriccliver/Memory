@@ -2,13 +2,19 @@
 
 Memory Infrastructure Layer - Vector/Graph based memory search and generation system.
 
+> 📄 **Research Paper**: [View PDF](openaikits-memory-technical-pre-report.pdf) | [Download PDF](https://github.com/fredriccliver/Memory/raw/main/openaikits-memory-technical-pre-report.pdf)
+
 ## Overview
 
-`@openaikits/memory` is a reusable package that provides memory infrastructure capabilities for AI applications. It provides:
+`@openaikits/memory` is a reusable package that provides memory infrastructure capabilities for AI applications. It introduces **entity-specific associative networks** inspired by human brain structure, where each entity maintains its own unique memory network structure.
+
+### Key Features
 
 - **Hybrid Memory Search**: Unified memory structure combining vector embeddings and graph relationships. Each memory node contains both semantic embeddings for similarity search and graph edges for relationship traversal, enabling a two-phase search strategy: vector search for initial discovery, followed by graph traversal to find connected memories.
-- **Dynamic Memory Generation**: AI-powered memory creation with consistency validation
-- **Adapter Pattern**: Pluggable database and AI model adapters
+- **Entity-Specific Networks**: Each entity (user, persona, workspace, agent) maintains its own unique associative memory network, enabling personalized, context-aware AI without model fine-tuning.
+- **Dynamic Memory Generation**: AI-powered memory creation with automatic relationship linking and consistency validation.
+- **Adapter Pattern**: Pluggable database and AI model adapters for maximum flexibility.
+- **Framework-Agnostic**: Works seamlessly with LangChain, custom implementations, and any LLM framework.
 
 ## Architecture
 
@@ -136,15 +142,28 @@ packages/memory/
 │   ├── adapters/             # Adapter interfaces
 │   │   ├── database-adapter.ts  # MemoryStorageAdapter interface
 │   │   └── ai-adapter.ts        # AIModelAdapter interface
-│   ├── vector/               # Vector search components (to be implemented)
-│   ├── graph/                # Graph traversal components (to be implemented)
-│   ├── memory/               # Memory management components (to be implemented)
-│   └── tools/                # AI tool definitions (to be implemented)
+│   ├── storage/              # Storage implementations
+│   │   ├── adapters/
+│   │   │   └── postgres-adapter.ts  # PostgreSQL storage adapter
+│   │   └── storage-types.ts
+│   ├── vector/               # Vector search components
+│   │   ├── embedding-service.ts    # Embedding generation service
+│   │   └── openai-adapter.ts       # OpenAI embedding adapter
+│   ├── memory/               # Memory management components
+│   │   ├── storage.ts        # MemoryStorage implementation
+│   │   ├── generator.ts      # DynamicMemoryGenerator
+│   │   ├── connector.ts      # MemoryConnector for LangChain
+│   │   └── tool-handler.ts   # MemoryToolHandler
+│   └── tools/                # AI tool definitions
+│       ├── definitions.ts    # Memory management tool definitions
+│       └── system-prompt-guide.ts
 ├── examples/                 # Usage examples
 │   ├── README.md             # Examples documentation
 │   ├── 01-basic-usage.ts     # Basic usage example
 │   ├── 02-langchain-sample.ts # LangChain integration example
-│   └── 03-generator-test.ts  # DynamicMemoryGenerator test
+│   ├── 03-generator-test.ts  # DynamicMemoryGenerator test
+│   └── 04-tool-handler-test.ts # Tool handler test
+├── openaikits-memory-technical-pre-report.pdf    # Technical pre-report (arXiv submission)
 └── README.md
 ```
 
@@ -155,14 +174,23 @@ packages/memory/
 - ✅ Type definitions (`Memory`, `AugmentationData`, `ValidationResult`, `ConversationContext`)
 - ✅ Database adapter interface (`MemoryStorageAdapter`)
 - ✅ AI model adapter interface (`AIModelAdapter`)
+- ✅ PostgreSQL storage adapter with pgvector support
+- ✅ Embedding service with OpenAI adapter
+- ✅ Memory storage implementation (create, read, update, delete, search)
+- ✅ Vector similarity search on memory nodes
+- ✅ Graph traversal algorithms (BFS, recursive CTE)
+- ✅ Dynamic memory generator with AI-powered memory creation
+- ✅ Memory connector for LangChain integration
+- ✅ Comprehensive tool handler with memory management tools
+- ✅ Tool definitions for AI-driven memory operations
 
-**To be implemented**:
+**Future Enhancements**:
 
-- ⏳ Vector search engine
-- ⏳ Graph traversal algorithms
-- ⏳ Dynamic memory generator
-- ⏳ Memory storage implementation
-- ⏳ AI tool definitions
+- 🔄 Conflict detection and resolution
+- 🔄 Agentic edge construction from natural language
+- 🔄 Enhanced dynamic relationship inference
+- 🔄 Temporal reasoning capabilities
+- 🔄 Multi-modal memory support
 
 ## Development
 
