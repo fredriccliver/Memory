@@ -50,7 +50,24 @@
 - handleDeleteMemory() 테스트 (Memory 삭제, 관련 연결 정리)
 - 에러 케이스 테스트
 
-### 5. `00-clear-seed-data.ts` - Seed 데이터 삭제
+### 5. `05-ai-tool-calling-integration-test.ts` - AI Tool Calling 통합 테스트
+
+- AI가 실제로 tool calling을 통해 Memory를 관리하는지 검증
+- 기존 seed data를 활용한 현실적인 시나리오 테스트
+- Tool Handler가 AI의 tool call을 제대로 처리하는지 검증
+- 전체 플로우가 의도한 대로 작동하는지 검증
+
+**테스트 시나리오**:
+- 시나리오 1: 새로운 정보 저장 (createMemory)
+- 시나리오 2: 기존 정보 수정 (updateMemory)
+- 시나리오 3: Memory 간 연결 (updateMemoryLink)
+- 시나리오 4: 복합 시나리오 (여러 tool 사용)
+
+**주의사항**:
+- 기존 seed data를 보호하기 위해 새로운 테스트용 entity ID 사용
+- 테스트 후 자동으로 테스트 데이터 정리
+
+### 6. `00-clear-seed-data.ts` - Seed 데이터 삭제
 
 Seed 데이터를 삭제하는 유틸리티 스크립트입니다.
 
@@ -114,11 +131,16 @@ npx tsx examples/03-generator-test.ts
 # MemoryToolHandler 테스트
 npx tsx examples/04-tool-handler-test.ts
 
+# AI Tool Calling 통합 테스트 (seed data 필요)
+npx tsx examples/05-ai-tool-calling-integration-test.ts
+
 # Seed 데이터 삭제
 npx tsx examples/00-clear-seed-data.ts
 ```
 
-**참고**: `03-generator-test.ts`는 `test-entity-generator` entity를 사용하므로, seed 데이터를 생성한 후 실행하면 더 풍부한 테스트 결과를 얻을 수 있습니다.
+**참고**: 
+- `03-generator-test.ts`는 `test-entity-generator` entity를 사용하므로, seed 데이터를 생성한 후 실행하면 더 풍부한 테스트 결과를 얻을 수 있습니다.
+- `05-ai-tool-calling-integration-test.ts`는 기존 seed data를 복사하여 사용하므로, seed 데이터를 먼저 생성해야 합니다. 테스트는 기존 seed data에 영향을 주지 않습니다.
 
 ## 의존성
 

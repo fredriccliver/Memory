@@ -29,6 +29,8 @@ export interface MemoryConnectorConfig {
   similarityThreshold?: number;
   /** Whether to automatically generate memories from context changes (default: true) */
   autoGenerate?: boolean;
+  /** Whether to enable decision logging via logMemoryDecision tool (default: false) */
+  enableDecisionLogging?: boolean;
 }
 
 /**
@@ -41,6 +43,10 @@ export interface MemoryContext {
   memories: Memory[];
   /** Template string for system prompt */
   template: string;
+  /** Query that was used for search (optional, for debugging and linking decisions) */
+  searchQuery?: string;
+  /** Whether memories came from vector search (true) or graph traversal (false) */
+  isFromVectorSearch?: boolean;
 }
 
 /**
@@ -391,11 +397,15 @@ export class MemoryConnector {
     const memories = allMemories.slice(0, this.config.maxMemoryCount || 50);
 
     // Generate template for system prompt
-    const template = this.generateTemplate(memories);
+    // Track which memories came from vector search vs graph traversal
+    const vectorMemoryIds = new Set(vectorMemories.map(m => m.id));
+    const template = this.generateTemplate(memories, conversationContext, true);
 
     return {
       memories,
       template,
+      searchQuery: conversationContext,
+      isFromVectorSearch: true, // getContext always starts with vector search
     };
   }
 
@@ -488,21 +498,51 @@ export class MemoryConnector {
    * Generates a template string from memories for system prompt
    *
    * @param memories - Memories to include in template
+   * @param searchQuery - Query that was used for search (optional)
+   * @param isFromVectorSearch - Whether memories came from vector search (optional)
    * @returns Template string
    *
    * @private
    */
-  private generateTemplate(memories: Memory[]): string {
+  private generateTemplate(
+    memories: Memory[],
+    searchQuery?: string,
+    isFromVectorSearch?: boolean,
+  ): string {
     if (memories.length === 0) {
       return '# 기억\n(아직 저장된 기억이 없습니다)';
     }
 
     const memoryLines = memories.map((memory, index) => {
-      const similarityInfo =
-        memory.similarity !== undefined ? ` (유사도: ${(memory.similarity * 100).toFixed(1)}%)` : '';
-      return `[기억 #${index + 1}${similarityInfo}] ${memory.content}`;
+      const parts: string[] = [];
+      
+      // Memory ID
+      parts.push(`[기억 #${index + 1} (UUID: ${memory.id})]`);
+      
+      // Similarity (if from vector search)
+      if (memory.similarity !== undefined && isFromVectorSearch) {
+        parts.push(`유사도: ${(memory.similarity * 100).toFixed(1)}%`);
+      }
+      
+      // Edge connections
+      if (memory.outgoingEdges && memory.outgoingEdges.length > 0) {
+        parts.push(`연결된 Memory: ${memory.outgoingEdges.length}개`);
+      }
+      
+      // Content
+      parts.push(memory.content);
+      
+      return parts.join(' | ');
     });
 
-    return `# 기억\n총 ${memories.length}개의 관련 기억이 검색되었습니다.\n\n${memoryLines.join('\n')}`;
+    let header = `# 기억\n총 ${memories.length}개의 관련 기억이 검색되었습니다.`;
+    if (searchQuery && isFromVectorSearch) {
+      header += `\n검색 쿼리: "${searchQuery}"`;
+    }
+    if (isFromVectorSearch === false) {
+      header += `\n(그래프 탐색을 통해 연결된 기억)`;
+    }
+
+    return `${header}\n\n${memoryLines.join('\n')}`;
   }
 }
