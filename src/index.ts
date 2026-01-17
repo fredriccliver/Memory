@@ -30,7 +30,8 @@ export type {
   ContextChangeCallback,
   ChattingManager,
 } from './memory/connector';
-// export * from './memory/generator';
+export { DynamicMemoryGenerator } from './memory/generator';
+export type { CollectAugmentationOptions } from './memory/generator';
 
 // Vector components
 export * from './vector/embedding-service';

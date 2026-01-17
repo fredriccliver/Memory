@@ -199,36 +199,30 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   async getConnectedMemories(memoryId: string, depth: number = 1): Promise<Memory[]> {
-    // BFS traversal to find connected memories
-    const visited = new Set<string>();
-    const queue: Array<{ id: string; depth: number }> = [{ id: memoryId, depth: 0 }];
-    const results: Memory[] = [];
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT * FROM ${schema}.get_connected_memories($1, $2)
+    `;
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
+    const result = await this.client.query(query, [memoryId, depth]);
+    return result.rows.map((row: any) => this.mapRowToMemory(row));
+  }
 
-      if (visited.has(current.id) || current.depth > depth) {
-        continue;
-      }
-
-      visited.add(current.id);
-
-      const memory = await this.getMemory(current.id);
-      if (memory && current.depth > 0) {
-        // Don't include the starting memory
-        results.push(memory);
-      }
-
-      if (current.depth < depth && memory) {
-        for (const edgeId of memory.outgoingEdges) {
-          if (!visited.has(edgeId)) {
-            queue.push({ id: edgeId, depth: current.depth + 1 });
-          }
-        }
-      }
+  async getConnectedMemoriesFromMultiple(
+    memoryIds: string[],
+    depth: number = 1,
+  ): Promise<Memory[]> {
+    if (memoryIds.length === 0) {
+      return [];
     }
 
-    return results;
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT * FROM ${schema}.get_connected_memories_from_multiple($1, $2)
+    `;
+
+    const result = await this.client.query(query, [memoryIds, depth]);
+    return result.rows.map((row: any) => this.mapRowToMemory(row));
   }
 
   async updateOutgoingEdges(memoryId: string, outgoingEdges: string[]): Promise<Memory> {

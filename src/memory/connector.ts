@@ -498,9 +498,11 @@ export class MemoryConnector {
     }
 
     const memoryLines = memories.map((memory, index) => {
-      return `[기억 #${index + 1}] ${memory.content}`;
+      const similarityInfo =
+        memory.similarity !== undefined ? ` (유사도: ${(memory.similarity * 100).toFixed(1)}%)` : '';
+      return `[기억 #${index + 1}${similarityInfo}] ${memory.content}`;
     });
 
-    return `# 기억\n${memoryLines.join('\n')}`;
+    return `# 기억\n총 ${memories.length}개의 관련 기억이 검색되었습니다.\n\n${memoryLines.join('\n')}`;
   }
 }
