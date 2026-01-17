@@ -50,5 +50,5 @@ export * from './vector/openai-adapter';
 // export * from './graph/relationship-engine';
 // export * from './graph/traversal';
 
-// Tools will be exported here as they are implemented
-// export * from './tools/ai-tools';
+// Tools
+export * from './tools';
