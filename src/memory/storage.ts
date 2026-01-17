@@ -52,7 +52,7 @@ export class MemoryStorage {
    *
    * @param memory - Memory to create (embedding is optional)
    * @param options - Creation options
-   * @returns Created memory with generated ID and embedding
+   * @returns Created memory with generated UUID (not table index) and embedding
    *
    * @public
    */
@@ -75,9 +75,9 @@ export class MemoryStorage {
   }
 
   /**
-   * Get a memory by ID
+   * Get a memory by UUID
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @returns Memory or null if not found
    *
    * @public
@@ -91,7 +91,7 @@ export class MemoryStorage {
    *
    * Automatically regenerates embedding if content is updated and embeddingService is available.
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @param updates - Partial memory updates
    * @returns Updated memory
    *
@@ -112,7 +112,7 @@ export class MemoryStorage {
   /**
    * Delete a memory
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @returns Whether the deletion was successful
    *
    * @public
@@ -124,7 +124,7 @@ export class MemoryStorage {
   /**
    * Get all memories for an entity
    *
-   * @param entityId - Entity ID
+   * @param entityId - Entity ID (TEXT, not UUID - e.g., persona ID, user ID, etc.)
    * @returns Array of memories
    *
    * @public
@@ -173,7 +173,7 @@ export class MemoryStorage {
   /**
    * Get memories connected via graph edges
    *
-   * @param memoryId - Starting memory ID
+   * @param memoryId - Starting memory UUID (not table index)
    * @param depth - Traversal depth (default: 1)
    * @returns Array of connected memories
    *
@@ -189,7 +189,7 @@ export class MemoryStorage {
    * More efficient than calling getConnectedMemories multiple times.
    * Returns all connected memories without duplicates.
    *
-   * @param memoryIds - Array of starting memory IDs
+   * @param memoryIds - Array of starting memory UUIDs (not table indexes)
    * @param depth - Traversal depth (default: 1)
    * @returns Array of connected memories (no duplicates, excludes starting memories)
    *
@@ -205,8 +205,8 @@ export class MemoryStorage {
   /**
    * Update memory's outgoing edges
    *
-   * @param memoryId - Memory ID to update
-   * @param outgoingEdges - New array of connected memory IDs
+   * @param memoryId - Memory UUID to update (not table index)
+   * @param outgoingEdges - New array of connected memory UUIDs (not table indexes)
    * @returns Updated memory
    *
    * @public

@@ -9,15 +9,15 @@
  * 별도의 Relationship 엔티티 없이 Node 자체에 연결 정보를 포함합니다.
  */
 export interface Memory {
-  /** Unique identifier for the memory */
+  /** Unique identifier for the memory (UUID, not table index) */
   id: string;
   /** Content of the memory (natural language text) */
   content: string;
-  /** ID of the entity this memory belongs to (e.g., persona, user, etc.) */
+  /** ID of the entity this memory belongs to (TEXT, not UUID - e.g., persona ID, user ID, etc.) */
   entityId: string;
   /** Embedding vector for similarity search */
   embedding?: number[];
-  /** Outgoing edges to related memories (graph structure) - Array of memory IDs */
+  /** Outgoing edges to related memories (graph structure) - Array of Memory UUIDs */
   outgoingEdges: string[];
   /** Similarity score (0-1) when returned from vector search */
   similarity?: number;

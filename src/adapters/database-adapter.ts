@@ -17,14 +17,14 @@ export interface MemoryStorageAdapter {
    * Create a new memory
    *
    * @param memory - Memory to create
-   * @returns Created memory with generated ID
+   * @returns Created memory with generated UUID (not table index)
    */
   createMemory(memory: Omit<Memory, 'id' | 'createdAt' | 'updatedAt'>): Promise<Memory>;
 
   /**
-   * Get a memory by ID
+   * Get a memory by UUID
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @returns Memory or null if not found
    */
   getMemory(memoryId: string): Promise<Memory | null>;
@@ -32,7 +32,7 @@ export interface MemoryStorageAdapter {
   /**
    * Update an existing memory
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @param updates - Partial memory updates
    * @returns Updated memory
    */
@@ -44,7 +44,7 @@ export interface MemoryStorageAdapter {
   /**
    * Delete a memory
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @returns Whether the deletion was successful
    */
   deleteMemory(memoryId: string): Promise<boolean>;
@@ -52,7 +52,7 @@ export interface MemoryStorageAdapter {
   /**
    * Get all memories for an entity
    *
-   * @param entityId - Entity ID (e.g., persona, user, etc.)
+   * @param entityId - Entity ID (TEXT, not UUID - e.g., persona ID, user ID, etc.)
    * @returns Array of memories
    */
   getMemoriesByEntity(entityId: string): Promise<Memory[]>;
@@ -78,7 +78,7 @@ export interface MemoryStorageAdapter {
    *
    * Traverses the graph by following `outgoingEdges` from the starting memory.
    *
-   * @param memoryId - Starting memory ID
+   * @param memoryId - Starting memory UUID (not table index)
    * @param depth - Traversal depth (default: 1)
    * @returns Array of connected memories
    */
@@ -90,7 +90,7 @@ export interface MemoryStorageAdapter {
    * Traverses the graph from multiple starting memories and returns all connected memories
    * without duplicates. More efficient than calling getConnectedMemories multiple times.
    *
-   * @param memoryIds - Array of starting memory IDs
+   * @param memoryIds - Array of starting memory UUIDs (not table indexes)
    * @param depth - Traversal depth (default: 1)
    * @returns Array of connected memories (no duplicates, excludes starting memories)
    */
@@ -102,8 +102,8 @@ export interface MemoryStorageAdapter {
    * Updates the `outgoingEdges` array of a memory to establish or remove connections.
    * This is the primary way to manage relationships between memories.
    *
-   * @param memoryId - Memory ID to update
-   * @param outgoingEdges - New array of connected memory IDs
+   * @param memoryId - Memory UUID to update (not table index)
+   * @param outgoingEdges - New array of connected memory UUIDs (not table indexes)
    * @returns Updated memory
    */
   updateOutgoingEdges(memoryId: string, outgoingEdges: string[]): Promise<Memory>;
@@ -111,7 +111,7 @@ export interface MemoryStorageAdapter {
   /**
    * Update memory embedding
    *
-   * @param memoryId - Memory ID
+   * @param memoryId - Memory UUID (not table index)
    * @param embedding - New embedding vector
    * @returns Updated memory
    */
