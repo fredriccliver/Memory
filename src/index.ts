@@ -32,6 +32,14 @@ export type {
 } from './memory/connector';
 export { DynamicMemoryGenerator } from './memory/generator';
 export type { CollectAugmentationOptions } from './memory/generator';
+export { MemoryToolHandler } from './memory/tool-handler';
+export type {
+  CreateMemoryParams,
+  UpdateMemoryParams,
+  UpdateMemoryLinkParams,
+  DeleteMemoryParams,
+  ToolHandlerResult,
+} from './memory/tool-handler';
 
 // Vector components
 export * from './vector/embedding-service';

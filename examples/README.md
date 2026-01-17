@@ -41,6 +41,15 @@
 - 기존 관계 수집
 - Edge case 테스트
 
+### 4. `04-tool-handler-test.ts` - MemoryToolHandler 테스트
+
+- MemoryToolHandler 초기화
+- handleCreateMemory() 테스트 (기본 생성, 관련 Memory 연결)
+- handleUpdateMemory() 테스트 (내용 업데이트, embedding 재생성)
+- handleUpdateMemoryLink() 테스트 (연결 추가/제거)
+- handleDeleteMemory() 테스트 (Memory 삭제, 관련 연결 정리)
+- 에러 케이스 테스트
+
 ### 5. `00-clear-seed-data.ts` - Seed 데이터 삭제
 
 Seed 데이터를 삭제하는 유틸리티 스크립트입니다.
@@ -101,6 +110,9 @@ npx tsx examples/02-langchain-sample.ts
 
 # DynamicMemoryGenerator 테스트
 npx tsx examples/03-generator-test.ts
+
+# MemoryToolHandler 테스트
+npx tsx examples/04-tool-handler-test.ts
 
 # Seed 데이터 삭제
 npx tsx examples/00-clear-seed-data.ts
