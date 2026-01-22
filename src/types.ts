@@ -3,6 +3,35 @@
  */
 
 /**
+ * Search mode for vector similarity search
+ *
+ * Determines how aggressively to search for similar memories.
+ * Lower thresholds return more results (broader search), higher thresholds return fewer but more relevant results (precise search).
+ *
+ * @public
+ */
+export enum SearchMode {
+  /** Aggressive search: threshold 0.2 - Returns more results, useful for exploratory searches */
+  AGGRESSIVE = 0.2,
+  /** Normal search: threshold 0.5 - Balanced between recall and precision */
+  NORMAL = 0.5,
+  /** Conservative search: threshold 0.7 - Returns fewer but more relevant results (default) */
+  CONSERVATIVE = 0.7,
+}
+
+/**
+ * Get threshold value from SearchMode
+ *
+ * @param mode - Search mode
+ * @returns Threshold value (0-1)
+ *
+ * @public
+ */
+export function getThresholdFromMode(mode: SearchMode): number {
+  return mode;
+}
+
+/**
  * Memory node representing a piece of information
  *
  * Memory는 Node로 저장되며, `outgoingEdges` 배열을 통해 Graph 구조를 형성합니다.

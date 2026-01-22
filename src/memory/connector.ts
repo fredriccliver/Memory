@@ -7,7 +7,7 @@
  * @public
  */
 
-import type { Memory } from '../types';
+import { Memory, SearchMode } from '../types';
 import type { MemoryStorage } from './storage';
 import type { ConversationContext } from '../types';
 
@@ -25,8 +25,8 @@ export interface MemoryConnectorConfig {
   mode?: 'read-only' | 'read-write';
   /** Maximum number of memories to retrieve (default: 50) */
   maxMemoryCount?: number;
-  /** Similarity threshold for vector search (default: 0.7) */
-  similarityThreshold?: number;
+  /** Similarity threshold for vector search using SearchMode enum (default: SearchMode.CONSERVATIVE) */
+  similarityThreshold?: SearchMode;
   /** Whether to automatically generate memories from context changes (default: true) */
   autoGenerate?: boolean;
   /** Whether to enable decision logging via logMemoryDecision tool (default: false) */
@@ -207,7 +207,7 @@ export class MemoryConnector {
       chainDepth: 10,
       mode: 'read-write',
       maxMemoryCount: 50,
-      similarityThreshold: 0.7,
+      similarityThreshold: SearchMode.CONSERVATIVE,
       autoGenerate: true,
       ...config,
     };
@@ -366,7 +366,7 @@ export class MemoryConnector {
       conversationContext,
       this.config.entityId,
       this.config.maxMemoryCount || 50,
-      this.config.similarityThreshold || 0.7,
+      this.config.similarityThreshold || SearchMode.CONSERVATIVE,
     );
 
     // Graph traversal to get connected memories

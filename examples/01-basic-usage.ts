@@ -14,7 +14,7 @@
 import { config } from 'dotenv';
 config();
 
-import { Memory, StorageType, OpenAIAdapter } from '../src/index';
+import { Memory, StorageType, OpenAIAdapter, SearchMode } from '../src/index';
 
 async function main() {
   console.log('🚀 Memory 패키지 기본 사용 예제 시작\n');
@@ -86,10 +86,16 @@ async function main() {
     await storage.updateOutgoingEdges(memory2.id, [memory3.id]);
     console.log('✅ Memory 연결 완료\n');
 
-    // 6. Vector 검색
+    // 6. Vector 검색 (SearchMode 사용)
     console.log('🔍 Vector 검색 테스트...');
-    const searchResults = await storage.searchByQuery('출퇴근 어떻게 해?', entityId, 10, 0.7);
-    console.log(`✅ 검색 결과: ${searchResults.length}개 발견\n`);
+    // SearchMode.CONSERVATIVE (기본값, 0.7) - 정확한 검색
+    const searchResults = await storage.searchByQuery(
+      '출퇴근 어떻게 해?',
+      entityId,
+      10,
+      SearchMode.CONSERVATIVE,
+    );
+    console.log(`✅ 검색 결과 (CONSERVATIVE 모드): ${searchResults.length}개 발견\n`);
     searchResults.forEach((result, index) => {
       console.log(
         `   ${index + 1}. ${result.content} (similarity: ${result.similarity?.toFixed(3)})`,

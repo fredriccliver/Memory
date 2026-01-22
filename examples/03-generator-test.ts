@@ -13,7 +13,7 @@
 import { config } from 'dotenv';
 config();
 
-import { Memory, StorageType, OpenAIAdapter, DynamicMemoryGenerator } from '../src/index';
+import { Memory, StorageType, OpenAIAdapter, DynamicMemoryGenerator, SearchMode } from '../src/index';
 
 async function main() {
   console.log('🚀 DynamicMemoryGenerator 테스트 시작\n');
@@ -98,9 +98,9 @@ async function main() {
     console.log('📊 테스트 1: Vector 검색 결과 수집');
     const query1 = '출퇴근 어떻게 해?';
     // threshold가 높아서 결과가 없을 수 있으므로, 직접 검색해서 확인
-    const directSearch1 = await storage.searchByQuery(query1, entityId, 10, 0.5);
+    const directSearch1 = await storage.searchByQuery(query1, entityId, 10, SearchMode.NORMAL);
     console.log(`   쿼리: "${query1}"`);
-    console.log(`   직접 검색 결과 (threshold 0.5): ${directSearch1.length}개`);
+    console.log(`   직접 검색 결과 (SearchMode.NORMAL): ${directSearch1.length}개`);
     const result1 = await generator.collectAugmentation(query1, entityId);
     console.log(`   Vector 메모리: ${result1.vectorMemories.length}개`);
     result1.vectorMemories.forEach((m, i) => {

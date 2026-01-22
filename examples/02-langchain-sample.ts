@@ -17,7 +17,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { Memory, StorageType, OpenAIAdapter, MemoryConnector } from '../src/index';
+import { Memory, StorageType, OpenAIAdapter, MemoryConnector, SearchMode } from '../src/index';
 
 // LangChain 라이브러리 import
 import { ChatOpenAI } from '@langchain/openai';
@@ -158,10 +158,10 @@ async function main() {
   const testQuery = '어디서 일하세요?';
   console.log(`   쿼리: "${testQuery}"`);
 
-  // threshold를 점진적으로 낮춰가며 테스트
-  for (const threshold of [0.7, 0.5, 0.3, 0.1, 0.0]) {
-    const results = await storage.searchByQuery(testQuery, entityId, 5, threshold);
-    console.log(`   threshold ${threshold}: ${results.length}개 검색`);
+  // SearchMode를 사용하여 테스트
+  for (const mode of [SearchMode.CONSERVATIVE, SearchMode.NORMAL, SearchMode.AGGRESSIVE]) {
+    const results = await storage.searchByQuery(testQuery, entityId, 5, mode);
+    console.log(`   SearchMode ${SearchMode[mode]} (threshold ${mode}): ${results.length}개 검색`);
     if (results.length > 0) {
       results.forEach((mem, idx) => {
         console.log(
@@ -178,7 +178,7 @@ async function main() {
   const connector = new MemoryConnector(storage, {
     entityId,
     maxMemoryCount: 10,
-    similarityThreshold: 0.2, // threshold를 낮춰서 더 많은 Memory 검색 (실제 사용 시 0.5-0.7 권장)
+    similarityThreshold: SearchMode.AGGRESSIVE, // 더 많은 Memory 검색 (실제 사용 시 NORMAL 또는 CONSERVATIVE 권장)
     chainDepth: 2,
     mode: 'read-write',
   });
