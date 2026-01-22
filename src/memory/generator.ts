@@ -10,6 +10,7 @@
 
 import type { MemoryStorage } from './storage';
 import type { AugmentationData, Memory } from '../types';
+import { SearchMode } from '../types';
 
 /**
  * Options for collecting augmentation data
@@ -67,12 +68,12 @@ export class DynamicMemoryGenerator {
     const { maxDepth = 2, limit = 50 } = options;
 
     // 1. Vector search for relevant memories
-    // Use lower threshold to ensure we get some results for augmentation
+    // Use NORMAL mode to ensure we get some results for augmentation
     const vectorMemories = await this.storage.searchByQuery(
       query,
       entityId,
       limit,
-      0.5, // similarity threshold (lowered to ensure results for augmentation context)
+      SearchMode.NORMAL, // Balanced threshold for augmentation context
     );
 
     // 2. Graph traversal to get connected memories from all vector memories at once

@@ -31,6 +31,7 @@ import {
   memoryManagementGuide,
   MemoryStorage,
   type MemoryContext,
+  SearchMode,
 } from '../src/index';
 import OpenAI from 'openai';
 import type { Memory as MemoryType } from '../src/types';
@@ -151,7 +152,7 @@ async function runScenario(
     entityId: scenario.entityId,
     mode: 'read-write',
     autoGenerate: true,
-    similarityThreshold: 0.2, // 기본값 0.7보다 낮게 설정하여 더 많은 결과 검색
+    similarityThreshold: SearchMode.AGGRESSIVE, // 더 많은 결과 검색 (기본값: CONSERVATIVE)
     maxMemoryCount: 20, // 검색 결과 수 제한
     enableDecisionLogging: true, // Decision logging 활성화 (테스트용)
   });

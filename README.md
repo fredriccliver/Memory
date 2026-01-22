@@ -107,6 +107,32 @@ interface Memory {
 - `workspace` - Team or workspace shared memories
 - `agent` - AI agent memories
 
+### Search Modes
+
+The package provides `SearchMode` enum for controlling vector similarity search behavior:
+
+```typescript
+enum SearchMode {
+  AGGRESSIVE = 0.2,  // Returns more results, useful for exploratory searches
+  NORMAL = 0.5,      // Balanced between recall and precision
+  CONSERVATIVE = 0.7, // Returns fewer but more relevant results (default)
+}
+```
+
+**Usage**:
+
+```typescript
+import { MemoryStorage, SearchMode } from '@openaikits/memory';
+
+// Use SearchMode enum
+const results = await storage.searchByQuery(
+  'user query',
+  entityId,
+  10,
+  SearchMode.AGGRESSIVE // or NORMAL, CONSERVATIVE
+);
+```
+
 ### Examples
 
 실제 사용 예제는 [`examples/`](./examples/) 디렉토리에서 확인할 수 있습니다.

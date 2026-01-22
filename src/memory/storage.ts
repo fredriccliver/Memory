@@ -7,7 +7,8 @@
  */
 
 import type { MemoryStorageAdapter } from '../adapters/database-adapter';
-import type { Memory } from '../types';
+import { Memory, SearchMode } from '../types';
+import { getThresholdFromMode } from '../types';
 import type { EmbeddingService } from '../vector/embedding-service';
 
 /**
@@ -141,7 +142,7 @@ export class MemoryStorage {
    * @param query - Search query (text or embedding vector)
    * @param entityId - Entity ID to filter by
    * @param limit - Maximum number of results
-   * @param threshold - Similarity threshold (0-1)
+   * @param searchMode - SearchMode enum for controlling search behavior (default: SearchMode.CONSERVATIVE)
    * @returns Array of memories sorted by similarity
    *
    * @public
@@ -150,7 +151,7 @@ export class MemoryStorage {
     query: string | number[],
     entityId: string,
     limit: number = 10,
-    threshold: number = 0.7,
+    searchMode: SearchMode = SearchMode.CONSERVATIVE,
   ): Promise<Memory[]> {
     let embedding: number[];
 
@@ -166,6 +167,9 @@ export class MemoryStorage {
       // Use provided embedding
       embedding = query;
     }
+
+    // Convert SearchMode to threshold
+    const threshold = getThresholdFromMode(searchMode);
 
     return this.adapter.searchByVector(embedding, entityId, limit, threshold);
   }
