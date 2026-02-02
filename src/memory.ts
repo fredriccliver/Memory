@@ -23,6 +23,8 @@ import { MemoryConnector, type MemoryConnectorConfig } from './memory/connector'
 export interface MemoryInitOptions {
   /** AI model adapter for embedding generation (optional) */
   aiAdapter?: AIModelAdapter;
+  /** When true, connector logs after-response flow and operation counts (default: false) */
+  verbose?: boolean;
 }
 
 /**
@@ -33,6 +35,7 @@ export interface MemoryInitOptions {
 export class Memory {
   private storage: MemoryStorage | null = null;
   private config: StorageConfig | null = null;
+  private verbose = false;
 
   /**
    * Initializes the Memory Infrastructure Layer with the provided storage configuration
@@ -62,6 +65,7 @@ export class Memory {
 
     // Create high-level storage with automatic embedding generation
     this.storage = new MemoryStorage(adapter, embeddingService);
+    this.verbose = options.verbose ?? false;
 
     // TODO: Add initialization for other storage types as they are implemented
   }
@@ -123,7 +127,7 @@ export class Memory {
         'Memory Infrastructure Layer has not been initialized. Call Memory.initialize() first.',
       );
     }
-    return new MemoryConnector(this.storage, config);
+    return new MemoryConnector(this.storage, { ...config, verbose: config.verbose ?? this.verbose });
   }
 
   /**

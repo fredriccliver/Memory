@@ -152,16 +152,11 @@ export class MemoryToolHandler {
       }
 
       // Create memory with automatic embedding generation
-      const memory = await this.storage.createMemory(
-        {
-          content: params.content.trim(),
-          entityId: params.entityId,
-          outgoingEdges: params.relatedMemoryIds || [],
-        },
-        {
-          autoGenerateEmbedding: true,
-        },
-      );
+      const memory = await this.storage.createMemory({
+        content: params.content.trim(),
+        entityId: params.entityId,
+        outgoingEdges: params.relatedMemoryIds || [],
+      });
 
       // Link to related memories (update their outgoingEdges to include this new memory)
       if (params.relatedMemoryIds && params.relatedMemoryIds.length > 0) {

@@ -12,7 +12,7 @@ Memory Infrastructure Layer - Vector/Graph based memory search and generation sy
 
 - **Hybrid Memory Search**: Unified memory structure combining vector embeddings and graph relationships. Each memory node contains both semantic embeddings for similarity search and graph edges for relationship traversal, enabling a two-phase search strategy: vector search for initial discovery, followed by graph traversal to find connected memories.
 - **Entity-Specific Networks**: Each entity (user, persona, workspace, agent) maintains its own unique associative memory network, enabling personalized, context-aware AI without model fine-tuning.
-- **Dynamic Memory Generation**: AI-powered memory creation with automatic relationship linking and consistency validation.
+- **Dynamic Memory Generation**: `DynamicMemoryGenerator` collects related memories (vector + graph) via `collectAugmentation()` for use when creating/linking memories. Used on-demand by `MemoryToolHandler` (e.g. for createMemory); not a cron or background job. Actual create/update/link are handled by `MemoryToolHandler` + `MemoryStorage`.
 - **Adapter Pattern**: Pluggable database and AI model adapters for maximum flexibility.
 - **Framework-Agnostic**: Works seamlessly with LangChain, custom implementations, and any LLM framework.
 
@@ -205,7 +205,7 @@ packages/memory/
 - ✅ Memory storage implementation (create, read, update, delete, search)
 - ✅ Vector similarity search on memory nodes
 - ✅ Graph traversal algorithms (BFS, recursive CTE)
-- ✅ Dynamic memory generator with AI-powered memory creation
+- ✅ DynamicMemoryGenerator (collectAugmentation for augmentation context; on-demand, not cron)
 - ✅ Memory connector for LangChain integration
 - ✅ Comprehensive tool handler with memory management tools
 - ✅ Tool definitions for AI-driven memory operations

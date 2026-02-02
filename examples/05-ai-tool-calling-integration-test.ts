@@ -151,7 +151,6 @@ async function runScenario(
   const memoryConnector = new MemoryConnector(storage, {
     entityId: scenario.entityId,
     mode: 'read-write',
-    autoGenerate: true,
     similarityThreshold: SearchMode.AGGRESSIVE, // 더 많은 결과 검색 (기본값: CONSERVATIVE)
     maxMemoryCount: 20, // 검색 결과 수 제한
     enableDecisionLogging: true, // Decision logging 활성화 (테스트용)
