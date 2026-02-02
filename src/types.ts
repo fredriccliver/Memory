@@ -34,8 +34,8 @@ export function getThresholdFromMode(mode: SearchMode): number {
 /**
  * Memory node representing a piece of information
  *
- * Memory는 Node로 저장되며, `outgoingEdges` 배열을 통해 Graph 구조를 형성합니다.
- * 별도의 Relationship 엔티티 없이 Node 자체에 연결 정보를 포함합니다.
+ * Memory is stored as a Node; `outgoingEdges` form a graph. There is no separate
+ * Relationship entity—each node holds its own connection info.
  */
 export interface Memory {
   /** Unique identifier for the memory (UUID, not table index) */
@@ -80,6 +80,8 @@ export interface ValidationResult {
 
 /**
  * Conversation context for memory generation
+ *
+ * Application layer passes this as-is; the memory layer decides how much to use (slicing, etc.).
  */
 export interface ConversationContext {
   /** Current conversation messages */
@@ -91,4 +93,26 @@ export interface ConversationContext {
   entityId: string;
   /** Additional context */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Single memory operation (create | update | updateLink | delete)
+ *
+ * @public
+ */
+export type MemoryOperation =
+  | { action: 'create'; content: string; relatedMemoryIds?: string[] }
+  | { action: 'update'; memoryId: string; content: string }
+  | { action: 'updateLink'; fromMemoryId: string; toMemoryId: string; linkAction: 'add' | 'remove' }
+  | { action: 'delete'; memoryId: string };
+
+/**
+ * Adapter for LLM completion used by the connector to obtain memory operations from context.
+ * Application provides this; the package owns prompt construction and parsing.
+ *
+ * @public
+ */
+export interface AfterResponseContextAdapter {
+  /** Generate completion from messages (e.g. system + user). Returns raw string (JSON). */
+  generate(messages: Array<{ role: string; content: string }>): Promise<string>;
 }

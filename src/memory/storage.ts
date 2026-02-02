@@ -17,8 +17,6 @@ import type { EmbeddingService } from '../vector/embedding-service';
  * @public
  */
 export interface CreateMemoryOptions {
-  /** Whether to automatically generate embedding if not provided */
-  autoGenerateEmbedding?: boolean;
   /** Whether to automatically link to related memories */
   autoLink?: boolean;
 }
@@ -61,11 +59,9 @@ export class MemoryStorage {
     memory: Omit<Memory, 'id' | 'createdAt' | 'updatedAt'>,
     options: CreateMemoryOptions = {},
   ): Promise<Memory> {
-    const { autoGenerateEmbedding = true } = options;
-
-    // Auto-generate embedding if not provided and service is available
+    // Always generate embedding when not provided and service is available
     let embedding = memory.embedding;
-    if (!embedding && autoGenerateEmbedding && this.embeddingService) {
+    if (!embedding && this.embeddingService) {
       embedding = await this.embeddingService.generateEmbedding(memory.content);
     }
 
