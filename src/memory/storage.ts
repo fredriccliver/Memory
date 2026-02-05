@@ -214,4 +214,8 @@ export class MemoryStorage {
   async updateOutgoingEdges(memoryId: string, outgoingEdges: string[]): Promise<Memory> {
     return this.adapter.updateOutgoingEdges(memoryId, outgoingEdges);
   }
+
+  async getAllEntityIds(): Promise<string[]> {
+    return this.adapter.getAllEntityIds();
+  }
 }

@@ -113,8 +113,8 @@ The package provides `SearchMode` enum for controlling vector similarity search 
 
 ```typescript
 enum SearchMode {
-  AGGRESSIVE = 0.2,  // Returns more results, useful for exploratory searches
-  NORMAL = 0.5,      // Balanced between recall and precision
+  AGGRESSIVE = 0.2, // Returns more results, useful for exploratory searches
+  NORMAL = 0.5, // Balanced between recall and precision
   CONSERVATIVE = 0.7, // Returns fewer but more relevant results (default)
 }
 ```
@@ -129,7 +129,7 @@ const results = await storage.searchByQuery(
   'user query',
   entityId,
   10,
-  SearchMode.AGGRESSIVE // or NORMAL, CONSERVATIVE
+  SearchMode.AGGRESSIVE, // or NORMAL, CONSERVATIVE
 );
 ```
 
@@ -183,6 +183,10 @@ packages/memory/
 │   └── tools/                # AI tool definitions
 │       ├── definitions.ts    # Memory management tool definitions
 │       └── system-prompt-guide.ts
+├── tools/                    # Developer tools
+│   └── graph-viewer/         # Memory graph visualization
+│       ├── server.ts         # HTTP server
+│       └── index.html        # Visualization UI
 ├── examples/                 # Usage examples
 │   ├── README.md             # Examples documentation
 │   ├── 01-basic-usage.ts     # Basic usage example
@@ -236,6 +240,31 @@ pnpm type-check
 # Lint
 pnpm lint
 ```
+
+### Graph Viewer Tool
+
+A built-in developer tool for visualizing memory nodes and their relationships.
+
+**Features:**
+
+- Interactive force-directed graph visualization
+- Entity selector to switch between different memory networks
+- Bidirectional edge rendering (A→B + B→A shown as ↔)
+- Node hover tooltip with content preview
+- Click to copy node ID
+
+**Usage:**
+
+```bash
+pnpm graph:viewer
+```
+
+This starts a local server at `http://localhost:3333` and opens the viewer in your browser.
+
+**Requirements:**
+
+- Database connection configured in `.env` (uses the same `DATABASE_URL` as the main package)
+- Memory data must exist in the database for the selected entity
 
 ## Type Definitions
 
