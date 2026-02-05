@@ -1,16 +1,18 @@
 /**
  * Memory Consolidator
  *
- * Handles background-style memory consolidation - scanning entity memories
- * and linking related memories based on vector similarity.
+ * Handles memory consolidation - scanning entity memories and linking
+ * related memories using LLM judgment.
  * Similar to how humans consolidate memories during sleep.
+ *
+ * Uses the same LLM-based approach as real-time memory linking:
+ * shows all memories to LLM and lets it decide logical relationships.
  *
  * @public
  */
 
 import type { MemoryStorage } from './storage';
-import type { Memory } from '../types';
-import { SearchMode } from '../types';
+import type { Memory, AfterResponseContextAdapter, MemoryOperation } from '../types';
 
 /**
  * Options for memory consolidation
@@ -19,19 +21,10 @@ import { SearchMode } from '../types';
  */
 export interface ConsolidateMemoriesOptions {
   /**
-   * Similarity threshold for linking memories (0-1)
-   * Higher values = stricter matching, fewer links
-   * Lower values = looser matching, more links
-   * @default 0.7
+   * LLM adapter for generating link decisions
+   * Required - consolidation uses LLM to determine logical relationships
    */
-  similarityThreshold?: number;
-
-  /**
-   * Maximum number of links to add per memory
-   * Prevents creating too many connections
-   * @default 5
-   */
-  maxLinksPerMemory?: number;
+  contextAdapter: AfterResponseContextAdapter;
 
   /**
    * Whether to create bidirectional links (A→B and B→A)
@@ -40,16 +33,22 @@ export interface ConsolidateMemoriesOptions {
   bidirectional?: boolean;
 
   /**
-   * Skip memories that already have this many or more outgoing edges
-   * Set to 0 to process all memories regardless of existing links
-   * @default 0 (process all)
+   * Maximum memories to process in a single LLM call
+   * If entity has more memories, they will be processed in batches
+   * @default 50
    */
-  skipIfEdgeCountAbove?: number;
+  batchSize?: number;
 
   /**
    * Callback for progress reporting
    */
   onProgress?: (progress: ConsolidationProgress) => void;
+
+  /**
+   * Enable verbose logging
+   * @default false
+   */
+  verbose?: boolean;
 }
 
 /**
@@ -58,12 +57,12 @@ export interface ConsolidateMemoriesOptions {
  * @public
  */
 export interface ConsolidationProgress {
-  /** Current memory index being processed */
-  current: number;
-  /** Total number of memories to process */
-  total: number;
-  /** ID of memory currently being processed */
-  memoryId: string;
+  /** Current batch being processed */
+  currentBatch: number;
+  /** Total number of batches */
+  totalBatches: number;
+  /** Total memories in entity */
+  totalMemories: number;
   /** Number of new links created so far */
   linksCreated: number;
 }
@@ -80,10 +79,10 @@ export interface ConsolidateMemoriesResult {
   memoriesProcessed: number;
   /** Total new links created */
   linksCreated: number;
-  /** Memories that were linked (with their new connections) */
-  linkedMemories: Array<{
-    memoryId: string;
-    newLinks: string[];
+  /** Links that were created */
+  createdLinks: Array<{
+    fromMemoryId: string;
+    toMemoryId: string;
   }>;
   /** Error message if failed */
   error?: string;
@@ -92,10 +91,40 @@ export interface ConsolidateMemoriesResult {
 }
 
 /**
+ * System prompt for consolidation LLM
+ */
+const CONSOLIDATION_SYSTEM_PROMPT = `You are a memory link analyzer. Your job is to identify logical relationships between memories and suggest links.
+
+You are given a list of memories for an entity. Each memory has:
+- id: unique identifier
+- content: the memory text
+- outgoingEdges: already linked memory IDs
+
+Analyze the memories and identify pairs that should be linked based on:
+- Logical relationships (cause-effect, context, related topics)
+- Semantic connections (same person, place, project, theme)
+- Temporal relationships (events that happened together or in sequence)
+
+Output a JSON object with "operations" array containing updateLink operations:
+{ "operations": [ { "action": "updateLink", "fromMemoryId": "...", "toMemoryId": "...", "linkAction": "add" }, ... ] }
+
+**Rules:**
+- Only suggest links that don't already exist (check outgoingEdges)
+- Only use memory IDs from the provided list
+- Focus on meaningful relationships, not superficial word matches
+- If no new links are needed, output { "operations": [] }
+- Output ONLY valid JSON. No markdown code fences.
+
+**Example relationships to link:**
+- "I run an AI startup" ↔ "Fundraising is the hardest part" (same context: startup)
+- "I live in Seoul" ↔ "My commute takes 1 hour" (related: location/daily life)
+- "I'm learning Python" ↔ "Built a web scraper last week" (related: programming)`;
+
+/**
  * Memory Consolidator
  *
  * Scans entity memories and creates links between related memories
- * based on vector similarity. Designed to be called periodically
+ * using LLM judgment. Designed to be called periodically
  * (like background maintenance) or manually triggered.
  *
  * @public
@@ -116,29 +145,28 @@ export class MemoryConsolidator {
    * Consolidate memories for an entity
    *
    * Scans all memories for the given entity and creates links between
-   * related memories based on vector similarity.
+   * related memories based on LLM judgment.
    *
    * @param entityId - Entity ID to consolidate memories for
-   * @param options - Consolidation options
+   * @param options - Consolidation options (contextAdapter required)
    * @returns Consolidation result with statistics
    *
    * @public
    */
   async consolidateMemories(
     entityId: string,
-    options: ConsolidateMemoriesOptions = {},
+    options: ConsolidateMemoriesOptions,
   ): Promise<ConsolidateMemoriesResult> {
     const startTime = Date.now();
     const {
-      similarityThreshold = 0.7,
-      maxLinksPerMemory = 5,
+      contextAdapter,
       bidirectional = true,
-      skipIfEdgeCountAbove = 0,
+      batchSize = 50,
       onProgress,
+      verbose = false,
     } = options;
 
     try {
-      // Get all memories for this entity
       const memories = await this.storage.getMemoriesByEntity(entityId);
 
       if (memories.length === 0) {
@@ -146,168 +174,214 @@ export class MemoryConsolidator {
           success: true,
           memoriesProcessed: 0,
           linksCreated: 0,
-          linkedMemories: [],
+          createdLinks: [],
           durationMs: Date.now() - startTime,
         };
       }
 
+      if (verbose) {
+        console.log(`[Consolidator] Processing ${memories.length} memories for entity ${entityId}`);
+      }
+
+      const totalBatches = Math.ceil(memories.length / batchSize);
       let totalLinksCreated = 0;
-      const linkedMemories: Array<{ memoryId: string; newLinks: string[] }> = [];
+      const allCreatedLinks: Array<{ fromMemoryId: string; toMemoryId: string }> = [];
 
-      // Process each memory
-      for (let i = 0; i < memories.length; i++) {
-        const memory = memories[i];
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const batchStart = batchIndex * batchSize;
+        const batchMemories = memories.slice(batchStart, batchStart + batchSize);
 
-        // Report progress
         if (onProgress) {
           onProgress({
-            current: i + 1,
-            total: memories.length,
-            memoryId: memory.id,
+            currentBatch: batchIndex + 1,
+            totalBatches,
+            totalMemories: memories.length,
             linksCreated: totalLinksCreated,
           });
         }
 
-        // Skip if memory already has enough edges
-        if (skipIfEdgeCountAbove > 0 && memory.outgoingEdges.length >= skipIfEdgeCountAbove) {
-          continue;
-        }
-
-        // Skip if memory has no embedding
-        if (!memory.embedding || memory.embedding.length === 0) {
-          continue;
-        }
-
-        // Find similar memories using vector search
-        const similarMemories = await this.findSimilarMemories(
-          memory,
-          memories,
-          similarityThreshold,
-          maxLinksPerMemory,
+        const operations = await this.getLinkOperationsFromLLM(
+          batchMemories,
+          contextAdapter,
+          verbose,
         );
 
-        if (similarMemories.length === 0) {
-          continue;
-        }
+        const createdLinks = await this.executeOperations(operations, bidirectional, verbose);
 
-        // Create links to similar memories
-        const newLinks = await this.createLinks(memory, similarMemories, bidirectional);
+        totalLinksCreated += createdLinks.length;
+        allCreatedLinks.push(...createdLinks);
+      }
 
-        if (newLinks.length > 0) {
-          totalLinksCreated += newLinks.length;
-          linkedMemories.push({
-            memoryId: memory.id,
-            newLinks,
-          });
-        }
+      if (verbose) {
+        console.log(`[Consolidator] Completed: ${totalLinksCreated} links created`);
       }
 
       return {
         success: true,
         memoriesProcessed: memories.length,
         linksCreated: totalLinksCreated,
-        linkedMemories,
+        createdLinks: allCreatedLinks,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      if (verbose) {
+        console.error(`[Consolidator] Error: ${errorMessage}`);
+      }
       return {
         success: false,
         memoriesProcessed: 0,
         linksCreated: 0,
-        linkedMemories: [],
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        createdLinks: [],
+        error: errorMessage,
         durationMs: Date.now() - startTime,
       };
     }
   }
 
-  /**
-   * Find similar memories for a given memory
-   *
-   * @param sourceMemory - Memory to find similar memories for
-   * @param allMemories - All memories to search through
-   * @param threshold - Similarity threshold
-   * @param maxResults - Maximum number of results
-   * @returns Array of similar memories (excluding already linked ones)
-   */
-  private async findSimilarMemories(
-    sourceMemory: Memory,
-    allMemories: Memory[],
-    threshold: number,
-    maxResults: number,
-  ): Promise<Memory[]> {
-    if (!sourceMemory.embedding) {
+  private formatMemoriesForPrompt(memories: Memory[]): string {
+    if (memories.length === 0) return '(none)';
+    return memories
+      .map(
+        m =>
+          `- id: ${m.id}\n  content: ${m.content}\n  outgoingEdges: [${(m.outgoingEdges ?? []).join(', ')}]`,
+      )
+      .join('\n');
+  }
+
+  private async getLinkOperationsFromLLM(
+    memories: Memory[],
+    contextAdapter: AfterResponseContextAdapter,
+    verbose: boolean,
+  ): Promise<MemoryOperation[]> {
+    const memoriesText = this.formatMemoriesForPrompt(memories);
+
+    const messages = [
+      { role: 'system', content: CONSOLIDATION_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: `Analyze these memories and suggest links:\n\n${memoriesText}\n\nOutput JSON: { "operations": [ ... ] }`,
+      },
+    ];
+
+    let raw: string;
+    try {
+      raw = await contextAdapter.generate(messages);
+    } catch (err) {
+      if (verbose) {
+        console.error('[Consolidator] LLM error:', err);
+      }
       return [];
     }
 
-    // Use vector search to find similar memories
-    const searchResults = await this.storage.searchByQuery(
-      sourceMemory.embedding,
-      sourceMemory.entityId,
-      maxResults + 1 + sourceMemory.outgoingEdges.length, // Extra to account for self and existing links
-      SearchMode.AGGRESSIVE, // Use aggressive to get more candidates, then filter by threshold
-    );
+    if (verbose) {
+      console.log('[Consolidator] LLM response:', raw.slice(0, 500));
+    }
 
-    // Filter results
-    return searchResults
-      .filter(memory => {
-        // Exclude self
-        if (memory.id === sourceMemory.id) {
-          return false;
-        }
-
-        // Exclude already linked memories
-        if (sourceMemory.outgoingEdges.includes(memory.id)) {
-          return false;
-        }
-
-        // Check similarity threshold
-        if (memory.similarity !== undefined && memory.similarity < threshold) {
-          return false;
-        }
-
-        return true;
-      })
-      .slice(0, maxResults);
+    return this.parseOperationsFromResponse(raw, memories);
   }
 
-  /**
-   * Create links between source memory and target memories
-   *
-   * @param sourceMemory - Source memory to link from
-   * @param targetMemories - Target memories to link to
-   * @param bidirectional - Whether to create bidirectional links
-   * @returns Array of newly linked memory IDs
-   */
-  private async createLinks(
-    sourceMemory: Memory,
-    targetMemories: Memory[],
-    bidirectional: boolean,
-  ): Promise<string[]> {
-    const newLinks: string[] = [];
+  private parseOperationsFromResponse(content: string, memories: Memory[]): MemoryOperation[] {
+    const trimmed = content
+      .trim()
+      .replace(/^```json?\s*|\s*```$/g, '')
+      .trim();
 
-    for (const targetMemory of targetMemories) {
-      // Add link from source to target
-      const sourceEdges = [...sourceMemory.outgoingEdges];
-      if (!sourceEdges.includes(targetMemory.id)) {
-        sourceEdges.push(targetMemory.id);
-        await this.storage.updateOutgoingEdges(sourceMemory.id, sourceEdges);
-        sourceMemory.outgoingEdges = sourceEdges; // Update local copy
-        newLinks.push(targetMemory.id);
+    let parsed: { operations?: unknown[] };
+    try {
+      parsed = JSON.parse(trimmed) as { operations?: unknown[] };
+    } catch {
+      return [];
+    }
+
+    const ops = Array.isArray(parsed?.operations) ? parsed.operations : [];
+    const validIds = new Set(memories.map(m => m.id));
+    const existingEdges = new Map<string, Set<string>>();
+
+    for (const m of memories) {
+      existingEdges.set(m.id, new Set(m.outgoingEdges ?? []));
+    }
+
+    const valid: MemoryOperation[] = [];
+
+    for (const o of ops) {
+      if (!o || typeof o !== 'object' || !('action' in o)) continue;
+      const raw = o as Record<string, unknown>;
+
+      if (
+        raw.action === 'updateLink' &&
+        typeof raw.fromMemoryId === 'string' &&
+        typeof raw.toMemoryId === 'string' &&
+        raw.linkAction === 'add'
+      ) {
+        const fromId = raw.fromMemoryId;
+        const toId = raw.toMemoryId;
+
+        if (!validIds.has(fromId) || !validIds.has(toId)) continue;
+        if (fromId === toId) continue;
+        if (existingEdges.get(fromId)?.has(toId)) continue;
+
+        valid.push({
+          action: 'updateLink',
+          fromMemoryId: fromId,
+          toMemoryId: toId,
+          linkAction: 'add',
+        });
       }
+    }
 
-      // Add reverse link if bidirectional
-      if (bidirectional) {
-        const targetEdges = [...targetMemory.outgoingEdges];
-        if (!targetEdges.includes(sourceMemory.id)) {
-          targetEdges.push(sourceMemory.id);
-          await this.storage.updateOutgoingEdges(targetMemory.id, targetEdges);
-          targetMemory.outgoingEdges = targetEdges; // Update local copy
+    return valid;
+  }
+
+  private async executeOperations(
+    operations: MemoryOperation[],
+    bidirectional: boolean,
+    verbose: boolean,
+  ): Promise<Array<{ fromMemoryId: string; toMemoryId: string }>> {
+    const createdLinks: Array<{ fromMemoryId: string; toMemoryId: string }> = [];
+
+    for (const op of operations) {
+      if (op.action !== 'updateLink') continue;
+
+      try {
+        const fromMemory = await this.storage.getMemory(op.fromMemoryId);
+        if (!fromMemory) continue;
+
+        const edges = [...fromMemory.outgoingEdges];
+        if (!edges.includes(op.toMemoryId)) {
+          edges.push(op.toMemoryId);
+          await this.storage.updateOutgoingEdges(op.fromMemoryId, edges);
+          createdLinks.push({ fromMemoryId: op.fromMemoryId, toMemoryId: op.toMemoryId });
+
+          if (verbose) {
+            console.log(`[Consolidator] Linked: ${op.fromMemoryId} → ${op.toMemoryId}`);
+          }
+        }
+
+        if (bidirectional) {
+          const toMemory = await this.storage.getMemory(op.toMemoryId);
+          if (toMemory) {
+            const reverseEdges = [...toMemory.outgoingEdges];
+            if (!reverseEdges.includes(op.fromMemoryId)) {
+              reverseEdges.push(op.fromMemoryId);
+              await this.storage.updateOutgoingEdges(op.toMemoryId, reverseEdges);
+
+              if (verbose) {
+                console.log(
+                  `[Consolidator] Linked (reverse): ${op.toMemoryId} → ${op.fromMemoryId}`,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (verbose) {
+          console.error('[Consolidator] Operation error:', err);
         }
       }
     }
 
-    return newLinks;
+    return createdLinks;
   }
 }
 
@@ -318,7 +392,7 @@ export class MemoryConsolidator {
  *
  * @param storage - Memory storage instance
  * @param entityId - Entity ID to consolidate memories for
- * @param options - Consolidation options
+ * @param options - Consolidation options (contextAdapter required)
  * @returns Consolidation result
  *
  * @public
@@ -326,7 +400,7 @@ export class MemoryConsolidator {
 export async function consolidateMemories(
   storage: MemoryStorage,
   entityId: string,
-  options: ConsolidateMemoriesOptions = {},
+  options: ConsolidateMemoriesOptions,
 ): Promise<ConsolidateMemoriesResult> {
   const consolidator = new MemoryConsolidator(storage);
   return consolidator.consolidateMemories(entityId, options);
