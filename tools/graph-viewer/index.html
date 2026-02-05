@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memory Graph Viewer</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      #controls {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 12px 20px;
+        background: rgba(15, 23, 42, 0.95);
+        border-bottom: 1px solid #334155;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        z-index: 100;
+      }
+      #controls label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: #94a3b8;
+      }
+      #entitySelect {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-size: 14px;
+        min-width: 280px;
+        cursor: pointer;
+      }
+      #entitySelect:focus {
+        outline: none;
+        border-color: #6366f1;
+      }
+      #stats {
+        font-size: 13px;
+        color: #64748b;
+      }
+      #graph {
+        width: 100vw;
+        height: calc(100vh - 56px);
+        margin-top: 56px;
+      }
+      #loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 16px;
+        color: #64748b;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <label>
+        Entity ID:
+        <select id="entitySelect">
+          <option value="">-- Select Entity --</option>
+        </select>
+      </label>
+      <span id="stats"></span>
+    </div>
+    <div id="graph">
+      <div id="loading">Select an entity to view its memory graph</div>
+    </div>
+
+    <script src="https://unpkg.com/force-graph@1.47.0/dist/force-graph.min.js"></script>
+    <script>
+      let graphInstance = null;
+
+      async function loadEntities() {
+        try {
+          const res = await fetch('/api/entities');
+          const entities = await res.json();
+          const select = document.getElementById('entitySelect');
+          entities.forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = id;
+            select.appendChild(opt);
+          });
+        } catch (error) {
+          console.error('Failed to load entities:', error);
+        }
+      }
+
+      async function loadGraph(entityId) {
+        if (!entityId) return;
+
+        document.getElementById('loading').textContent = 'Loading graph...';
+        document.getElementById('loading').style.display = 'block';
+
+        try {
+          const res = await fetch(`/api/graph?entityId=${encodeURIComponent(entityId)}`);
+          const data = await res.json();
+
+          document.getElementById('stats').textContent =
+            `Nodes: ${data.nodes.length} | Edges: ${data.links.length}`;
+          document.getElementById('loading').style.display = 'none';
+
+          const container = document.getElementById('graph');
+          container.innerHTML = '';
+
+          if (graphInstance) {
+            graphInstance._destructor && graphInstance._destructor();
+          }
+
+          graphInstance = ForceGraph()(container)
+            .graphData(data)
+            .nodeId('id')
+            .nodeLabel(node => {
+              const content =
+                node.content.length > 150 ? node.content.slice(0, 150) + '...' : node.content;
+              return `${content}\n\nEdges: ${node.edgeCount} | ${new Date(node.createdAt).toLocaleString()}`;
+            })
+            .nodeColor(() => '#6366f1')
+            .nodeRelSize(6)
+            .linkColor(() => '#475569')
+            .linkWidth(1.5)
+            .linkDirectionalArrowLength(4)
+            .linkDirectionalArrowRelPos(1)
+            .backgroundColor('#0f172a')
+            .width(container.clientWidth)
+            .height(container.clientHeight)
+            .onNodeClick(node => {
+              if (node) {
+                navigator.clipboard.writeText(node.id).then(() => {
+                  console.log('Node ID copied:', node.id);
+                });
+              }
+            });
+        } catch (error) {
+          console.error('Failed to load graph:', error);
+          document.getElementById('loading').textContent = 'Failed to load graph';
+        }
+      }
+
+      document.getElementById('entitySelect').addEventListener('change', e => {
+        loadGraph(e.target.value);
+      });
+
+      window.addEventListener('resize', () => {
+        if (graphInstance) {
+          const container = document.getElementById('graph');
+          graphInstance.width(container.clientWidth).height(container.clientHeight);
+        }
+      });
+
+      loadEntities();
+    </script>
+  </body>
+</html>

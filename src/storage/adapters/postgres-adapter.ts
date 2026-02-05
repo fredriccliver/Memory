@@ -233,6 +233,17 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     return this.updateMemory(memoryId, { embedding });
   }
 
+  async getAllEntityIds(): Promise<string[]> {
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT DISTINCT entity_id FROM ${schema}.memories
+      ORDER BY entity_id
+    `;
+
+    const result = await this.client.query(query);
+    return result.rows.map((row: any) => row.entity_id);
+  }
+
   /**
    * Maps database row to Memory object
    */

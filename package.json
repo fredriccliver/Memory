@@ -19,7 +19,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint src --ext .ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "graph:viewer": "tsx tools/graph-viewer/server.ts"
   },
   "keywords": [
     "memory",

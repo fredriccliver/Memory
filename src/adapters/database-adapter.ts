@@ -116,4 +116,11 @@ export interface MemoryStorageAdapter {
    * @returns Updated memory
    */
   updateEmbedding(memoryId: string, embedding: number[]): Promise<Memory>;
+
+  /**
+   * Get all unique entity IDs
+   *
+   * @returns Array of unique entity IDs sorted alphabetically
+   */
+  getAllEntityIds(): Promise<string[]>;
 }
