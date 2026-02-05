@@ -40,6 +40,12 @@ export type {
   DeleteMemoryParams,
   ToolHandlerResult,
 } from './memory/tool-handler';
+export { MemoryConsolidator, consolidateMemories } from './memory/consolidator';
+export type {
+  ConsolidateMemoriesOptions,
+  ConsolidateMemoriesResult,
+  ConsolidationProgress,
+} from './memory/consolidator';
 
 // Vector components
 export * from './vector/embedding-service';
