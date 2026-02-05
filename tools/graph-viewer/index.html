@@ -53,10 +53,15 @@
         font-size: 13px;
         color: #64748b;
       }
-      #graph {
+      #graph-container {
         width: 100vw;
         height: calc(100vh - 56px);
         margin-top: 56px;
+        position: relative;
+      }
+      #graph {
+        width: 100%;
+        height: 100%;
       }
       #loading {
         position: fixed;
@@ -65,6 +70,28 @@
         transform: translate(-50%, -50%);
         font-size: 16px;
         color: #64748b;
+      }
+      #tooltip {
+        position: fixed;
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid #475569;
+        border-radius: 8px;
+        padding: 12px;
+        max-width: 300px;
+        font-size: 13px;
+        pointer-events: none;
+        z-index: 1000;
+        display: none;
+      }
+      #tooltip .content {
+        color: #e2e8f0;
+        margin-bottom: 8px;
+        line-height: 1.4;
+        word-break: break-word;
+      }
+      #tooltip .meta {
+        color: #64748b;
+        font-size: 11px;
       }
     </style>
   </head>
@@ -78,13 +105,16 @@
       </label>
       <span id="stats"></span>
     </div>
-    <div id="graph">
+    <div id="graph-container">
       <div id="loading">Select an entity to view its memory graph</div>
+      <div id="graph"></div>
     </div>
+    <div id="tooltip"></div>
 
     <script src="https://unpkg.com/force-graph@1.47.0/dist/force-graph.min.js"></script>
     <script>
       let graphInstance = null;
+      let hoveredNode = null;
 
       async function loadEntities() {
         try {
@@ -102,11 +132,72 @@
         }
       }
 
+      function showTooltip(node) {
+        const tooltip = document.getElementById('tooltip');
+        const content =
+          node.content.length > 200 ? node.content.slice(0, 200) + '...' : node.content;
+
+        tooltip.innerHTML = `
+          <div class="content">${escapeHtml(content)}</div>
+          <div class="meta">Edges: ${node.edgeCount} | ${new Date(node.createdAt).toLocaleString()}</div>
+        `;
+        tooltip.style.display = 'block';
+      }
+
+      function hideTooltip() {
+        document.getElementById('tooltip').style.display = 'none';
+      }
+
+      function updateTooltipPosition(e) {
+        const tooltip = document.getElementById('tooltip');
+        if (tooltip.style.display === 'none') return;
+
+        let x = e.clientX + 15;
+        let y = e.clientY + 15;
+
+        const rect = tooltip.getBoundingClientRect();
+        if (x + rect.width > window.innerWidth - 10) {
+          x = e.clientX - rect.width - 15;
+        }
+        if (y + rect.height > window.innerHeight - 10) {
+          y = e.clientY - rect.height - 15;
+        }
+
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function processLinks(links) {
+        const linkPairs = new Map();
+
+        links.forEach(link => {
+          const forwardKey = `${link.source}|${link.target}`;
+          const reverseKey = `${link.target}|${link.source}`;
+
+          if (linkPairs.has(reverseKey)) {
+            linkPairs.get(reverseKey).bidirectional = true;
+          } else {
+            linkPairs.set(forwardKey, { ...link, bidirectional: false });
+          }
+        });
+
+        return Array.from(linkPairs.values());
+      }
+
       async function loadGraph(entityId) {
         if (!entityId) return;
 
-        document.getElementById('loading').textContent = 'Loading graph...';
-        document.getElementById('loading').style.display = 'block';
+        const loading = document.getElementById('loading');
+        loading.textContent = 'Loading graph...';
+        loading.style.display = 'block';
+        hideTooltip();
+        hoveredNode = null;
 
         try {
           const res = await fetch(`/api/graph?entityId=${encodeURIComponent(entityId)}`);
@@ -114,32 +205,87 @@
 
           document.getElementById('stats').textContent =
             `Nodes: ${data.nodes.length} | Edges: ${data.links.length}`;
-          document.getElementById('loading').style.display = 'none';
+          loading.style.display = 'none';
 
           const container = document.getElementById('graph');
           container.innerHTML = '';
 
           if (graphInstance) {
             graphInstance._destructor && graphInstance._destructor();
+            graphInstance = null;
           }
 
+          const processedLinks = processLinks(data.links);
+          const processedData = { nodes: data.nodes, links: processedLinks };
+
+          const nodeColor = '#6366f1';
+          const linkColor = '#94a3b8';
+          const NODE_R = 6;
+
           graphInstance = ForceGraph()(container)
-            .graphData(data)
+            .graphData(processedData)
             .nodeId('id')
-            .nodeLabel(node => {
-              const content =
-                node.content.length > 150 ? node.content.slice(0, 150) + '...' : node.content;
-              return `${content}\n\nEdges: ${node.edgeCount} | ${new Date(node.createdAt).toLocaleString()}`;
-            })
-            .nodeColor(() => '#6366f1')
-            .nodeRelSize(6)
-            .linkColor(() => '#475569')
-            .linkWidth(1.5)
-            .linkDirectionalArrowLength(4)
+            .nodeLabel(null)
+            .nodeColor(() => nodeColor)
+            .nodeRelSize(NODE_R)
+            .linkWidth(2)
+            .linkDirectionalArrowLength(6)
             .linkDirectionalArrowRelPos(1)
+            .linkDirectionalArrowColor(() => linkColor)
+            .linkCanvasObjectMode(() => 'after')
+            .linkCanvasObject((link, ctx, globalScale) => {
+              if (!link.bidirectional) return;
+
+              const start = link.source;
+              const end = link.target;
+              if (typeof start !== 'object' || typeof end !== 'object') return;
+
+              const dx = end.x - start.x;
+              const dy = end.y - start.y;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              if (len === 0) return;
+
+              // Unit vector from start to end
+              const ux = dx / len;
+              const uy = dy / len;
+
+              const arrowLen = 6;
+              const arrowWidth = 4;
+
+              // Reverse arrow: tip at source node edge, pointing INTO source
+              // Same positioning logic as the built-in arrow (which is at target)
+              const tipX = start.x + ux * NODE_R;
+              const tipY = start.y + uy * NODE_R;
+
+              // Arrow base extends outward along the link (away from source)
+              const baseX = tipX + ux * arrowLen;
+              const baseY = tipY + uy * arrowLen;
+
+              // Perpendicular for arrow width
+              const perpX = (-uy * arrowWidth) / 2;
+              const perpY = (ux * arrowWidth) / 2;
+
+              ctx.beginPath();
+              ctx.moveTo(tipX, tipY);
+              ctx.lineTo(baseX + perpX, baseY + perpY);
+              ctx.lineTo(baseX - perpX, baseY - perpY);
+              ctx.closePath();
+              ctx.fillStyle = linkColor;
+              ctx.fill();
+            })
+            .linkColor(() => linkColor)
             .backgroundColor('#0f172a')
             .width(container.clientWidth)
             .height(container.clientHeight)
+            .onNodeHover(node => {
+              hoveredNode = node;
+              container.style.cursor = node ? 'pointer' : 'default';
+              if (node) {
+                showTooltip(node);
+              } else {
+                hideTooltip();
+              }
+            })
             .onNodeClick(node => {
               if (node) {
                 navigator.clipboard.writeText(node.id).then(() => {
@@ -149,13 +295,15 @@
             });
         } catch (error) {
           console.error('Failed to load graph:', error);
-          document.getElementById('loading').textContent = 'Failed to load graph';
+          loading.textContent = 'Failed to load graph';
         }
       }
 
       document.getElementById('entitySelect').addEventListener('change', e => {
         loadGraph(e.target.value);
       });
+
+      document.addEventListener('mousemove', updateTooltipPosition);
 
       window.addEventListener('resize', () => {
         if (graphInstance) {
