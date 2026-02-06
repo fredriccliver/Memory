@@ -13,7 +13,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc",
@@ -29,8 +31,8 @@
     "llm",
     "ai"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": "OpenAIKits",
+  "license": "Apache-2.0",
   "dependencies": {
     "@langchain/core": "^1.1.15",
     "@langchain/openai": "^1.2.2",
