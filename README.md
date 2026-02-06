@@ -309,4 +309,5 @@ This package is designed as a reusable, framework-agnostic library. When contrib
 
 ## License
 
-MIT
+This project is licensed under the [Apache License 2.0](LICENSE).  
+See [NOTICE](NOTICE) for attribution and [TRADEMARKS.md](TRADEMARKS.md) for use of OpenAIKits names and marks.
