@@ -24,20 +24,33 @@ async function main() {
 
   const storage = memory.getStorage();
 
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url!, `http://localhost:${PORT}`);
 
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
+
+    const setCors = (headers: Record<string, string>) => ({ ...corsHeaders, ...headers });
+
     try {
       if (url.pathname === '/') {
-        const html = readFileSync(join(__dirname, 'index.html'), 'utf-8');
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(html);
+        res.writeHead(200, setCors({ 'Content-Type': 'text/html; charset=utf-8' }));
+        res.end(readFileSync(join(__dirname, 'index.html'), 'utf-8'));
         return;
       }
 
       if (url.pathname === '/api/entities') {
         const entities = await storage.getAllEntityIds();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, setCors({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify(entities));
         return;
       }
@@ -45,7 +58,7 @@ async function main() {
       if (url.pathname === '/api/graph') {
         const entityId = url.searchParams.get('entityId');
         if (!entityId) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.writeHead(400, setCors({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ error: 'entityId required' }));
           return;
         }
@@ -66,16 +79,16 @@ async function main() {
             .map(targetId => ({ source: m.id, target: targetId })),
         );
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, setCors({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ nodes, links }));
         return;
       }
 
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.writeHead(404, setCors({ 'Content-Type': 'text/plain' }));
       res.end('Not Found');
     } catch (error) {
       console.error('API Error:', error);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, setCors({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify({ error: 'Internal Server Error' }));
     }
   });

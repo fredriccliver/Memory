@@ -312,7 +312,23 @@
         }
       });
 
-      loadEntities();
+      (async function init() {
+        await loadEntities();
+        const params = new URLSearchParams(window.location.search);
+        const entityId = params.get('entityId');
+        if (entityId) {
+          const select = document.getElementById('entitySelect');
+          const hasOption = Array.from(select.options).some(o => o.value === entityId);
+          if (!hasOption) {
+            const opt = document.createElement('option');
+            opt.value = entityId;
+            opt.textContent = entityId;
+            select.appendChild(opt);
+          }
+          select.value = entityId;
+          await loadGraph(entityId);
+        }
+      })();
     </script>
   </body>
 </html>
