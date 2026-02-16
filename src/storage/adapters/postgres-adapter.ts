@@ -6,7 +6,7 @@
  */
 
 import type { MemoryStorageAdapter } from '../../adapters/database-adapter';
-import type { Memory } from '../../types';
+import type { Memory, EdgeTraversalStat } from '../../types';
 import type { PostgresStorageConfig } from '../storage-types';
 import { initDatabase, ensureTablesExist } from '../migrations/postgres-init';
 
@@ -242,6 +242,71 @@ export class PostgresAdapter implements MemoryStorageAdapter {
 
     const result = await this.client.query(query);
     return result.rows.map((row: any) => row.entity_id);
+  }
+
+  /**
+   * Record edge traversals for statistics tracking
+   *
+   * @description Uses INSERT ... ON CONFLICT DO UPDATE to upsert traversal counts.
+   *
+   * @param entityId - Entity ID the edges belong to
+   * @param edges - Array of traversed edges (from → to)
+   */
+  async recordEdgeTraversals(
+    entityId: string,
+    edges: Array<{ from: string; to: string }>,
+  ): Promise<void> {
+    if (edges.length === 0) return;
+
+    const schema = this.config.schema || 'memory';
+
+    // Build batch VALUES clause
+    const values: any[] = [];
+    const valuePlaceholders: string[] = [];
+    let paramIndex = 1;
+
+    for (const edge of edges) {
+      valuePlaceholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+      values.push(entityId, edge.from, edge.to);
+    }
+
+    const query = `
+      INSERT INTO ${schema}.edge_traversals (entity_id, from_memory_id, to_memory_id)
+      VALUES ${valuePlaceholders.join(', ')}
+      ON CONFLICT (entity_id, from_memory_id, to_memory_id)
+      DO UPDATE SET
+        traversal_count = ${schema}.edge_traversals.traversal_count + 1,
+        last_traversed_at = NOW()
+    `;
+
+    await this.client.query(query, values);
+  }
+
+  /**
+   * Get edge traversal statistics for an entity
+   *
+   * @description Returns all recorded edge traversals sorted by traversal_count DESC.
+   *
+   * @param entityId - Entity ID to query
+   * @returns Array of edge traversal statistics
+   */
+  async getEdgeTraversalStats(entityId: string): Promise<EdgeTraversalStat[]> {
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT from_memory_id, to_memory_id, traversal_count, last_traversed_at
+      FROM ${schema}.edge_traversals
+      WHERE entity_id = $1
+      ORDER BY traversal_count DESC
+    `;
+
+    const result = await this.client.query(query, [entityId]);
+
+    return result.rows.map((row: any) => ({
+      fromMemoryId: row.from_memory_id,
+      toMemoryId: row.to_memory_id,
+      traversalCount: Number(row.traversal_count),
+      lastTraversedAt: row.last_traversed_at,
+    }));
   }
 
   /**

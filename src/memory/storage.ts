@@ -9,6 +9,7 @@
 import type { MemoryStorageAdapter } from '../adapters/database-adapter';
 import { Memory, SearchMode } from '../types';
 import { getThresholdFromMode } from '../types';
+import type { EdgeTraversalStat } from '../types';
 import type { EmbeddingService } from '../vector/embedding-service';
 
 /**
@@ -217,5 +218,37 @@ export class MemoryStorage {
 
   async getAllEntityIds(): Promise<string[]> {
     return this.adapter.getAllEntityIds();
+  }
+
+  /**
+   * Record edge traversals for statistics tracking
+   *
+   * @description Delegates to the adapter to batch-upsert traversal counts.
+   *
+   * @param entityId - Entity ID the edges belong to
+   * @param edges - Array of traversed edges (from → to)
+   *
+   * @public
+   */
+  async recordEdgeTraversals(
+    entityId: string,
+    edges: Array<{ from: string; to: string }>,
+  ): Promise<void> {
+    return this.adapter.recordEdgeTraversals(entityId, edges);
+  }
+
+  /**
+   * Get edge traversal statistics for an entity
+   *
+   * @description Delegates to the adapter to retrieve all edge traversal records
+   * sorted by traversal_count DESC.
+   *
+   * @param entityId - Entity ID to query
+   * @returns Array of edge traversal statistics
+   *
+   * @public
+   */
+  async getEdgeTraversalStats(entityId: string): Promise<EdgeTraversalStat[]> {
+    return this.adapter.getEdgeTraversalStats(entityId);
   }
 }

@@ -617,6 +617,27 @@ Use the conversation below to decide operations.`;
     // Limit to maxMemoryCount
     const memories = allMemories.slice(0, this.config.maxMemoryCount || 50);
 
+    // Record edge traversals for statistics tracking
+    // Reconstruct traversed edges from returned memories' outgoingEdges
+    const returnedIds = new Set(memories.map(m => m.id));
+    const traversedEdges: Array<{ from: string; to: string }> = [];
+
+    for (const mem of memories) {
+      for (const edgeTarget of mem.outgoingEdges) {
+        if (returnedIds.has(edgeTarget)) {
+          traversedEdges.push({ from: mem.id, to: edgeTarget });
+        }
+      }
+    }
+
+    if (traversedEdges.length > 0) {
+      this.storage
+        .recordEdgeTraversals(this.config.entityId, traversedEdges)
+        .catch(err => {
+          console.error('[Memory] Failed to record edge traversals:', err);
+        });
+    }
+
     // Generate template for system prompt
     // Track which memories came from vector search vs graph traversal
     const vectorMemoryIds = new Set(vectorMemories.map(m => m.id));
