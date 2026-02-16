@@ -5,7 +5,7 @@
  * Implementations can use any database (PostgreSQL, Supabase, etc.)
  */
 
-import type { Memory } from '../types';
+import type { Memory, EdgeTraversalStat } from '../types';
 
 /**
  * Database adapter interface for memory operations
@@ -123,4 +123,28 @@ export interface MemoryStorageAdapter {
    * @returns Array of unique entity IDs sorted alphabetically
    */
   getAllEntityIds(): Promise<string[]>;
+
+  /**
+   * Record edge traversals for statistics tracking
+   *
+   * @description Batch UPSERT: increments traversal_count for each edge,
+   * or inserts with count=1 if the edge has not been traversed before.
+   *
+   * @param entityId - Entity ID the edges belong to
+   * @param edges - Array of traversed edges (from → to)
+   */
+  recordEdgeTraversals(
+    entityId: string,
+    edges: Array<{ from: string; to: string }>,
+  ): Promise<void>;
+
+  /**
+   * Get edge traversal statistics for an entity
+   *
+   * @description Returns all recorded edge traversals sorted by traversal_count DESC.
+   *
+   * @param entityId - Entity ID to query
+   * @returns Array of edge traversal statistics
+   */
+  getEdgeTraversalStats(entityId: string): Promise<EdgeTraversalStat[]>;
 }

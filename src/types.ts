@@ -116,3 +116,70 @@ export interface AfterResponseContextAdapter {
   /** Generate completion from messages (e.g. system + user). Returns raw string (JSON). */
   generate(messages: Array<{ role: string; content: string }>): Promise<string>;
 }
+
+// ============================================================================
+// Optimizer types
+// ============================================================================
+
+/**
+ * Single optimizer operation returned by LLM
+ *
+ * @public
+ */
+export type OptimizerOperation =
+  | {
+      action: 'compress';
+      sourceMemoryIds: string[];
+      compressedContent: string;
+      linkTo?: string[];
+    }
+  | { action: 'addEdge'; fromMemoryId: string; toMemoryId: string }
+  | { action: 'removeEdge'; fromMemoryId: string; toMemoryId: string };
+
+/**
+ * Edge traversal statistics for a single edge
+ *
+ * @public
+ */
+export interface EdgeTraversalStat {
+  /** Source memory UUID */
+  fromMemoryId: string;
+  /** Target memory UUID */
+  toMemoryId: string;
+  /** Number of times this edge was traversed */
+  traversalCount: number;
+  /** Last time this edge was traversed */
+  lastTraversedAt: Date;
+}
+
+/**
+ * Options for running memory optimization
+ *
+ * @public
+ */
+export interface OptimizationOptions {
+  /** Which strategy to run ('all' | 'compress' | 'shortcut' | 'cleanup') */
+  scope?: 'all' | 'compress' | 'shortcut' | 'cleanup';
+  /** Maximum memories per LLM call (default: 50) */
+  batchSize?: number;
+  /** LLM adapter for generating optimization decisions (required) */
+  contextAdapter: AfterResponseContextAdapter;
+  /** Enable verbose logging (default: false) */
+  verbose?: boolean;
+}
+
+/**
+ * Result of running memory optimization
+ *
+ * @public
+ */
+export interface OptimizationResult {
+  /** Number of compressed nodes created */
+  compressedNodesCreated: number;
+  /** Number of shortcut edges added */
+  shortcutsCreated: number;
+  /** Number of edges removed */
+  linksRemoved: number;
+  /** Total execution time in milliseconds */
+  durationMs: number;
+}

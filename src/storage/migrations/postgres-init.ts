@@ -187,6 +187,24 @@ export async function ensureTablesExist(client: any, schema: string = 'memory'):
     $$;
   `);
 
+  // Create edge traversals table for tracking graph traversal statistics
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.edge_traversals (
+      entity_id TEXT NOT NULL,
+      from_memory_id UUID NOT NULL,
+      to_memory_id UUID NOT NULL,
+      traversal_count INTEGER NOT NULL DEFAULT 1,
+      last_traversed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (entity_id, from_memory_id, to_memory_id)
+    )
+  `);
+
+  // Create index for querying edge traversals by entity
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_edge_traversals_entity_id
+    ON ${schema}.edge_traversals(entity_id)
+  `);
+
   // Create function to get connected memories from multiple starting points without duplicates
   await client.query(`
     CREATE OR REPLACE FUNCTION ${schema}.get_connected_memories_from_multiple(

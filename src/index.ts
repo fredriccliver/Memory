@@ -46,6 +46,19 @@ export type {
   ConsolidateMemoriesResult,
   ConsolidationProgress,
 } from './memory/consolidator';
+export {
+  MemoryOptimizer,
+  optimizeMemories,
+  compressMemories,
+  createMemoryShortcuts,
+  cleanupMemoryLinks,
+} from './memory/optimizer';
+export type {
+  CompressResult,
+  ShortcutResult,
+  CleanupResult,
+  OptimizerMethodOptions,
+} from './memory/optimizer';
 
 // Vector components
 export * from './vector/embedding-service';

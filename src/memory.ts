@@ -14,6 +14,7 @@ import { isPostgresConfig } from './storage/storage-types';
 import { MemoryStorage } from './memory/storage';
 import { EmbeddingService } from './vector/embedding-service';
 import { MemoryConnector, type MemoryConnectorConfig } from './memory/connector';
+import { MemoryOptimizer } from './memory/optimizer';
 
 /**
  * Memory Infrastructure Layer initialization options
@@ -128,6 +129,27 @@ export class Memory {
       );
     }
     return new MemoryConnector(this.storage, { ...config, verbose: config.verbose ?? this.verbose });
+  }
+
+  /**
+   * Creates a Memory Optimizer instance
+   *
+   * Memory Optimizer provides graph optimization operations: compress,
+   * shortcut creation, and link cleanup. Each strategy delegates decisions
+   * to an LLM, following the same pattern as MemoryConsolidator.
+   *
+   * @returns Memory Optimizer instance
+   * @throws Error if Memory has not been initialized
+   *
+   * @public
+   */
+  createOptimizer(): MemoryOptimizer {
+    if (!this.storage) {
+      throw new Error(
+        'Memory Infrastructure Layer has not been initialized. Call Memory.initialize() first.',
+      );
+    }
+    return new MemoryOptimizer(this.storage);
   }
 
   /**
