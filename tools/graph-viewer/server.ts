@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { exec } from 'node:child_process';
+import { exec, execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
@@ -13,7 +13,54 @@ const __dirname = dirname(__filename);
 
 const PORT = Number(process.env.GRAPH_VIEWER_PORT) || 3333;
 
+/**
+ * 지정된 포트를 사용 중인 프로세스의 PID를 반환합니다.
+ *
+ * @param port - 확인할 포트 번호
+ * @returns 포트를 사용 중인 PID, 없으면 null
+ */
+function getProcessOnPort(port: number): number | null {
+  try {
+    const cmd =
+      process.platform === 'win32'
+        ? `netstat -ano | findstr :${port} | findstr LISTENING`
+        : `lsof -ti :${port}`;
+    const output = execSync(cmd, { encoding: 'utf-8' }).trim();
+    const pid = parseInt(output.split('\n')[0], 10);
+    return isNaN(pid) ? null : pid;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 지정된 포트를 사용 중인 프로세스를 종료합니다.
+ *
+ * @param port - 해제할 포트 번호
+ * @returns 프로세스 종료 성공 여부
+ */
+function killProcessOnPort(port: number): boolean {
+  const pid = getProcessOnPort(port);
+  if (!pid) return false;
+
+  try {
+    process.kill(pid, 'SIGTERM');
+    console.log(`🔪 Killed existing process (PID: ${pid}) on port ${port}`);
+    return true;
+  } catch (err) {
+    console.error(`⚠️ Failed to kill process (PID: ${pid}):`, err);
+    return false;
+  }
+}
+
 async function main() {
+  const existingPid = getProcessOnPort(PORT);
+  if (existingPid) {
+    console.log(`⚠️ Port ${PORT} is already in use (PID: ${existingPid})`);
+    killProcessOnPort(PORT);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
   const memory = new Memory();
 
   await memory.initialize({
@@ -102,12 +149,20 @@ async function main() {
     exec(`${openCmd} ${url}`);
   });
 
-  process.on('SIGINT', async () => {
+  /**
+   * Graceful shutdown handler.
+   * SIGINT (Ctrl+C) 및 SIGTERM (터미널 종료) 모두 처리하여
+   * 포트가 정상 반환되도록 합니다.
+   */
+  async function shutdown() {
     console.log('\n🔌 Shutting down...');
-    await memory.close();
     server.close();
+    await memory.close();
     process.exit(0);
-  });
+  }
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 main().catch(error => {
