@@ -62,7 +62,9 @@ This package connects to PostgreSQL **directly** via the `pg` client (and pgvect
 When the host app uses **Supabase**, both access the **same** Postgres database: the app via Supabase Client, this package via a direct connection string. You cannot derive the Postgres URI from `NEXT_PUBLIC_SUPABASE_URL`; use **Supabase Dashboard → Settings → Database → Connection string** (URI).
 
 - **Local (Supabase CLI)**: typically `postgresql://postgres:postgres@127.0.0.1:54332/postgres` (see `supabase start` output).
-- **Production (Supabase Hosted)**: use the **Transaction mode** (pooler, port 6543) URI for serverless (e.g. Vercel) to avoid connection limits.
+- **Production (Supabase Hosted)**: use a **Transaction pooler** URI (port 6543) for serverless (e.g. Vercel).
+  - **Shared Pooler (IPv4 compatible)**: recommended when the host is IPv4-only (e.g. Vercel). In Dashboard → Connection string → URI → Transaction pooler, use **"Using the Shared Pooler"** (green IPv4 COMPATIBLE). Format: `postgresql://postgres.[PROJECT-REF]:[PASSWORD]@aws-1-[REGION].pooler.supabase.com:6543/postgres`.
+  - **Dedicated Pooler** (`db.[ref].supabase.co:6543`) is **not IPv4 compatible** unless you have the IPv4 add-on; use Shared Pooler if you see `ENOTFOUND` or connection failures.
 
 The host app is responsible for passing the connection string at init (e.g. from `MEMORY_DATABASE_URL` in Neume).
 
