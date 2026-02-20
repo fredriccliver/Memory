@@ -50,6 +50,22 @@ pnpm install
 pnpm install @openaikits/memory
 ```
 
+## Database connection (Postgres / Supabase)
+
+This package connects to PostgreSQL **directly** via the `pg` client (and pgvector). It does not use the Supabase HTTP API.
+
+| Access path | Role | Config |
+|-------------|------|--------|
+| **Supabase Client** (host app) | REST API, Auth, Storage, RLS | `NEXT_PUBLIC_SUPABASE_URL` + keys |
+| **Memory (this package)** | Vector search, memory CRUD (pg + pgvector) | Postgres connection URI passed at `Memory.initialize()` |
+
+When the host app uses **Supabase**, both access the **same** Postgres database: the app via Supabase Client, this package via a direct connection string. You cannot derive the Postgres URI from `NEXT_PUBLIC_SUPABASE_URL`; use **Supabase Dashboard → Settings → Database → Connection string** (URI).
+
+- **Local (Supabase CLI)**: typically `postgresql://postgres:postgres@127.0.0.1:54332/postgres` (see `supabase start` output).
+- **Production (Supabase Hosted)**: use the **Transaction mode** (pooler, port 6543) URI for serverless (e.g. Vercel) to avoid connection limits.
+
+The host app is responsible for passing the connection string at init (e.g. from `MEMORY_DATABASE_URL` in Neume).
+
 ## Usage
 
 ### Basic Setup
