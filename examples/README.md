@@ -86,8 +86,8 @@ Create a `.env` file in the package root (`packages/memory/`):
 # Go to package root
 cd packages/memory
 
-# Copy .env.example from examples
-cp examples/.env.example .env
+# Copy .env.example
+cp .env.example .env
 
 # Edit .env with your values
 # OPENAI_API_KEY=your_actual_api_key
