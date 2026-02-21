@@ -489,7 +489,7 @@ Output ONLY valid JSON. No markdown code fences.`;
       console.log(
         '[Memory] verbose existingMemories:',
         existingMemories.length,
-        existingMemories.map(m => ({ id: m.id, content: m.content.slice(0, 50) })),
+        existingMemories.map(m => ({ id: m.id, content: m.content })),
       );
     }
 
