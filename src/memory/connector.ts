@@ -19,6 +19,10 @@ import type { ConversationContext, MemoryOperation, AfterResponseContextAdapter 
 export interface MemoryConnectorConfig {
   /** Entity ID (e.g., persona ID, user ID) */
   entityId: string;
+  /** Human-readable name for this entity (e.g., replica/persona name). Used in after-response prompts to distinguish "self" vs "partner" in memory content. */
+  entityName?: string;
+  /** Human-readable name for the conversation partner (e.g., user display name). Used in after-response prompts so the LLM can attribute facts to the correct subject. */
+  partnerName?: string;
   /** Maximum depth for graph traversal (default: 10) */
   chainDepth?: number;
   /** Operation mode: read-only or read-write (default: 'read-write'). read-write includes handleAfterResponse (auto memory generation on response). */
@@ -373,11 +377,33 @@ export class MemoryConnector {
     }
   }
 
-  private static readonly AFTER_RESPONSE_DECISION_SYSTEM = `You are a memory manager for an entity in a chat (entity = persona, user, org, etc.; do not assume a specific type).
+  /**
+   * Builds the system prompt for after-response memory decisions.
+   * When entityName/partnerName are provided, injects ownership attribution rules
+   * so the LLM clearly distinguishes "self (entity)" facts from "partner" facts.
+   */
+  private buildAfterResponseSystemPrompt(): string {
+    const { entityName, partnerName } = this.config;
+
+    const ownershipBlock =
+      entityName || partnerName
+        ? `
+**Memory ownership — CRITICAL:**
+This entity is "${entityName || 'the assistant'}" (the assistant in the conversation).
+The conversation partner is "${partnerName || 'the user'}" (the user in the conversation).
+When creating or updating memories, you MUST clearly indicate WHO the fact is about in the content:
+- Facts about this entity (assistant): start with "나는 ~" or "${entityName || 'this entity'}는 ~"  (e.g. "나는 커피를 좋아한다", "나는 서울에 산다")
+- Facts about the partner (user): start with "${partnerName || '상대방'}은(는) ~" or "상대방은 ~"  (e.g. "${partnerName || '상대방'}은(는) 서울에 산다", "${partnerName || '상대방'}은(는) 개발자이다")
+- NEVER store a partner's fact without clearly attributing it to "${partnerName || '상대방'}". If the user says "I live in Seoul", the memory content must be "${partnerName || '상대방'}은(는) 서울에 산다", NOT "서울에 산다" or "I live in Seoul".
+- NEVER confuse who said what. The "user" role in the conversation is ${partnerName || 'the partner'}, the "assistant" role is ${entityName || 'this entity'}.
+- Store facts from BOTH sides — do not skip facts said by the assistant (${entityName || 'this entity'}). If the assistant says "나는 녹차를 좋아해", create a memory like "${entityName || '나'}는 녹차를 좋아한다".`
+        : '';
+
+    return `You are a memory manager for an entity in a chat.
 You are given:
 1. **Existing memories** for this entity (each with id, content, outgoingEdges). This list is the result of one retrieval from the conversation; you may only reference memory IDs that appear in this list. You cannot reference or update memories that are not listed here.
 2. The recent conversation.
-
+${ownershipBlock}
 Output a JSON object with a single key "operations": an array of memory operations. Each operation must use exactly the schema below (other fields are ignored).
 
 **Exact operation schema (use these field names only):**
@@ -387,18 +413,19 @@ Output a JSON object with a single key "operations": an array of memory operatio
 - delete: { "action": "delete", "memoryId": string }  — memoryId from Existing memories.
 
 **When to use:**
-- create: New fact about this entity not already in existing memories. Avoid duplicates; if similar content exists, use update instead.
+- create: New fact about this entity OR its partner not already in existing memories. Avoid duplicates; if similar content exists, use update instead.
 - update: Existing memory content has changed (e.g. "I live in NYC" → user said "I moved to Boston"). Do NOT use create when the fact is an update.
 - updateLink: Two existing memories are related (add link) or no longer related (remove). Only add if not already in outgoingEdges.
 - delete: Memory is clearly wrong or no longer needed. Prefer update over delete when possible.
 
-**Example:** { "operations": [ { "action": "create", "content": "User likes coffee", "relatedMemoryIds": [] } ] }
+**Example:** { "operations": [ { "action": "create", "content": "${partnerName || '상대방'}은(는) 커피를 좋아한다", "relatedMemoryIds": [] } ] }
 
 **Rules:**
 - Only output operations clearly implied by the conversation. If nothing to do, output { "operations": [] }.
 - Use UUIDs from the "Existing memories" list only. Do not invent IDs.
-- Prefer update over create when the conversation changes previously stated information.
+- Prefer update over create when the conversation changes previously stated information.${ownershipBlock ? '\n- ALWAYS include the subject (who the fact is about) in the memory content.' : ''}
 Output ONLY valid JSON. No markdown code fences.`;
+  }
 
   private static formatExistingMemoriesForPrompt(memories: Memory[]): string {
     if (memories.length === 0) return '(none)';
@@ -503,7 +530,7 @@ Use the conversation below to decide operations.`;
     const tail = 'Output JSON: { "operations": [ ... ] }';
 
     const messagesToSend: Array<{ role: string; content: string }> = [
-      { role: 'system', content: MemoryConnector.AFTER_RESPONSE_DECISION_SYSTEM },
+      { role: 'system', content: this.buildAfterResponseSystemPrompt() },
       { role: 'user', content: preamble },
       ...conversationMessages,
       { role: 'user', content: tail },
