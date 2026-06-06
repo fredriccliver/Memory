@@ -23,6 +23,8 @@ export interface MemoryConnectorConfig {
   entityName?: string;
   /** Human-readable name for the conversation partner (e.g., user display name). Used in after-response prompts so the LLM can attribute facts to the correct subject. */
   partnerName?: string;
+  /** Auto-saved memory content language. Default `ko`. */
+  contentLocale?: 'ko' | 'en';
   /** Maximum depth for graph traversal (default: 10) */
   chainDepth?: number;
   /** Operation mode: read-only or read-write (default: 'read-write'). read-write includes handleAfterResponse (auto memory generation on response). */
@@ -383,7 +385,11 @@ export class MemoryConnector {
    * so the LLM clearly distinguishes "self (entity)" facts from "partner" facts.
    */
   private buildAfterResponseSystemPrompt(): string {
-    const { entityName, partnerName } = this.config;
+    const { entityName, partnerName, contentLocale = 'ko' } = this.config;
+    const contentLanguageRule =
+      contentLocale === 'en'
+        ? '- Write all new/updated memory **content** in **English**.'
+        : '- 모든 memory **content**는 **한국어** 평서문으로 작성.';
 
     const ownershipBlock =
       entityName || partnerName
@@ -424,6 +430,7 @@ Output a JSON object with a single key "operations": an array of memory operatio
 - Only output operations clearly implied by the conversation. If nothing to do, output { "operations": [] }.
 - Use UUIDs from the "Existing memories" list only. Do not invent IDs.
 - Prefer update over create when the conversation changes previously stated information.${ownershipBlock ? '\n- ALWAYS include the subject (who the fact is about) in the memory content.' : ''}
+${contentLanguageRule}
 Output ONLY valid JSON. No markdown code fences.`;
   }
 
