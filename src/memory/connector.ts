@@ -39,6 +39,14 @@ export interface MemoryConnectorConfig {
   contextAdapter?: AfterResponseContextAdapter;
   /** When true, log after-response flow and operation counts (default: false). Can be set at init or per-connector. */
   verbose?: boolean;
+  /**
+   * Optional runner to tag embedding calls as search (vector query) vs write (persist).
+   * Used by application layers for cost observability (e.g. Langfuse scope).
+   */
+  runWithEmbeddingScope?: <T>(
+    scope: 'search' | 'write',
+    fn: () => T | Promise<T>,
+  ) => T | Promise<T>;
 }
 
 /**
@@ -511,9 +519,10 @@ Output ONLY valid JSON. No markdown code fences.`;
 
     // Single retrieval: "Existing memories" shown to the LLM are from this one getContext call.
     // todo: Future: allow the memory-manager LLM to run memory search (e.g. as a tool) multiple times before deciding operations.
+    const runScope = this.config.runWithEmbeddingScope ?? (<T>(_scope: 'search' | 'write', fn: () => T) => fn());
     let existingMemories: Memory[] = [];
     try {
-      const memContext = await this.getContext(conversationText);
+      const memContext = await runScope('search', () => this.getContext(conversationText));
       existingMemories = memContext.memories ?? [];
     } catch {
       // continue with empty
@@ -564,41 +573,47 @@ Use the conversation below to decide operations.`;
     );
     for (const op of operations) {
       try {
-        if (op.action === 'create') {
-          const created = await this.createMemory(op.content, {
-            relatedMemoryIds: op.relatedMemoryIds ?? [],
-          });
-          if (this.config.verbose) {
-            console.log('[Memory] verbose create:', {
-              id: created.id,
-              content: created.content,
+        await runScope('write', async () => {
+          if (op.action === 'create') {
+            const created = await this.createMemory(op.content, {
               relatedMemoryIds: op.relatedMemoryIds ?? [],
             });
+            if (this.config.verbose) {
+              console.log('[Memory] verbose create:', {
+                id: created.id,
+                content: created.content,
+                relatedMemoryIds: op.relatedMemoryIds ?? [],
+              });
+            }
+          } else if (op.action === 'update') {
+            const updated = await this.updateMemory(op.memoryId, op.content);
+            if (this.config.verbose) {
+              console.log('[Memory] verbose update:', {
+                memoryId: op.memoryId,
+                newContent: updated.content,
+              });
+            }
+          } else if (op.action === 'updateLink') {
+            const linked = await this.updateMemoryLink(
+              op.fromMemoryId,
+              op.toMemoryId,
+              op.linkAction,
+            );
+            if (this.config.verbose) {
+              console.log('[Memory] verbose updateLink:', {
+                linkAction: op.linkAction,
+                fromMemoryId: op.fromMemoryId,
+                toMemoryId: op.toMemoryId,
+                outgoingEdges: linked.outgoingEdges,
+              });
+            }
+          } else if (op.action === 'delete') {
+            await this.deleteMemory(op.memoryId);
+            if (this.config.verbose) {
+              console.log('[Memory] verbose delete:', { memoryId: op.memoryId });
+            }
           }
-        } else if (op.action === 'update') {
-          const updated = await this.updateMemory(op.memoryId, op.content);
-          if (this.config.verbose) {
-            console.log('[Memory] verbose update:', {
-              memoryId: op.memoryId,
-              newContent: updated.content,
-            });
-          }
-        } else if (op.action === 'updateLink') {
-          const linked = await this.updateMemoryLink(op.fromMemoryId, op.toMemoryId, op.linkAction);
-          if (this.config.verbose) {
-            console.log('[Memory] verbose updateLink:', {
-              linkAction: op.linkAction,
-              fromMemoryId: op.fromMemoryId,
-              toMemoryId: op.toMemoryId,
-              outgoingEdges: linked.outgoingEdges,
-            });
-          }
-        } else if (op.action === 'delete') {
-          await this.deleteMemory(op.memoryId);
-          if (this.config.verbose) {
-            console.log('[Memory] verbose delete:', { memoryId: op.memoryId });
-          }
-        }
+        });
       } catch (err) {
         console.error('[Memory] operation error:', op.action, err);
       }
