@@ -12,6 +12,16 @@ import type { AIModelAdapter } from '../adapters/ai-adapter';
  *
  * @public
  */
+/** Embedding API usage reported after a successful request. */
+export interface EmbeddingUsageEvent {
+  /** Model slug sent to the API (e.g. openai/text-embedding-3-small). */
+  model: string;
+  /** Number of input texts in the batch. */
+  textCount: number;
+  promptTokens: number;
+  totalTokens: number;
+}
+
 export interface OpenAIAdapterConfig {
   /** OpenAI API key */
   apiKey: string;
@@ -19,6 +29,8 @@ export interface OpenAIAdapterConfig {
   embeddingModel?: string;
   /** Base URL for OpenAI API (default: 'https://api.openai.com/v1') */
   baseURL?: string;
+  /** Optional hook for token usage after each embedding API call. */
+  onEmbeddingUsage?: (usage: EmbeddingUsageEvent) => void;
 }
 
 /**
@@ -29,6 +41,10 @@ interface OpenAIEmbeddingResponse {
     embedding: number[];
     index: number;
   }>;
+  usage?: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
 }
 
 /**
@@ -38,7 +54,7 @@ interface OpenAIEmbeddingResponse {
  */
 export class OpenAIAdapter implements AIModelAdapter {
   private config: Required<Pick<OpenAIAdapterConfig, 'embeddingModel' | 'baseURL'>> &
-    Pick<OpenAIAdapterConfig, 'apiKey'>;
+    Pick<OpenAIAdapterConfig, 'apiKey' | 'onEmbeddingUsage'>;
 
   /**
    * Creates a new OpenAI adapter
@@ -54,6 +70,7 @@ export class OpenAIAdapter implements AIModelAdapter {
       apiKey: config.apiKey,
       embeddingModel: config.embeddingModel ?? 'text-embedding-3-small',
       baseURL: config.baseURL ?? 'https://api.openai.com/v1',
+      onEmbeddingUsage: config.onEmbeddingUsage,
     };
   }
 
@@ -68,6 +85,7 @@ export class OpenAIAdapter implements AIModelAdapter {
     }
 
     const response = await this.requestEmbeddings(texts);
+    this.reportEmbeddingUsage(texts.length, response);
     return this.parseEmbeddings(response, texts.length);
   }
 
@@ -117,6 +135,17 @@ export class OpenAIAdapter implements AIModelAdapter {
     }
 
     return (await response.json()) as OpenAIEmbeddingResponse;
+  }
+
+  private reportEmbeddingUsage(textCount: number, response: OpenAIEmbeddingResponse): void {
+    const usage = response.usage;
+    if (!usage || !this.config.onEmbeddingUsage) return;
+    this.config.onEmbeddingUsage({
+      model: this.config.embeddingModel,
+      textCount,
+      promptTokens: usage.prompt_tokens,
+      totalTokens: usage.total_tokens,
+    });
   }
 
   /**
