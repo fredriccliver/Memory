@@ -9,7 +9,13 @@
 
 import { Memory, SearchMode } from '../types';
 import type { MemoryStorage } from './storage';
-import type { ConversationContext, MemoryOperation, AfterResponseContextAdapter } from '../types';
+import type {
+  ConversationContext,
+  MemoryOperation,
+  AfterResponseContextAdapter,
+  GateDecisionRecord,
+} from '../types';
+import { normalizeMemoryTuning, type MemoryTuning } from '../tuning';
 
 /**
  * Configuration for Memory Connector
@@ -47,6 +53,8 @@ export interface MemoryConnectorConfig {
     scope: 'search' | 'write',
     fn: () => T | Promise<T>,
   ) => T | Promise<T>;
+  /** Runtime tuning values (dedup gate mode, thresholds). Invalid fields fall back to defaults. */
+  tuning?: Partial<MemoryTuning>;
 }
 
 /**
@@ -75,6 +83,24 @@ export interface CreateMemoryOptions {
   relatedMemoryIds?: string[];
   /** Whether to automatically link to related memories (default: true) */
   autoLink?: boolean;
+  /** Precomputed embedding for the content (e.g. reused from a dedup gate lookup) */
+  embedding?: number[];
+}
+
+/**
+ * Result of a dedup gate lookup for a creation candidate.
+ * Mode-agnostic: contains the judgment only; how it is acted on
+ * (log-only vs skip) is decided by the caller based on the gate mode.
+ *
+ * @internal
+ */
+interface DedupGateJudgement {
+  /** Embedding generated for the candidate content (reusable for creation) */
+  embedding: number[];
+  /** Most similar existing memory, if any */
+  match: Memory | null;
+  /** Whether the candidate is a duplicate per the configured threshold */
+  wouldSkip: boolean;
 }
 
 /**
@@ -205,6 +231,7 @@ function createLangChainAdapter(chain: unknown, connector: MemoryConnector): Cha
 export class MemoryConnector {
   private storage: MemoryStorage;
   private config: MemoryConnectorConfig;
+  private tuning: MemoryTuning;
   private contextChangeCallback?: ContextChangeCallback;
   private chattingManager?: ChattingManager;
   private isConnected: boolean = false;
@@ -224,6 +251,21 @@ export class MemoryConnector {
       similarityThreshold: SearchMode.CONSERVATIVE,
       ...config,
     };
+    this.tuning = normalizeMemoryTuning(config.tuning);
+  }
+
+  /**
+   * Gets the normalized runtime tuning values
+   *
+   * Invalid or missing fields in the provided config are already replaced
+   * with defaults.
+   *
+   * @returns Normalized tuning values
+   *
+   * @public
+   */
+  getTuning(): Readonly<MemoryTuning> {
+    return { ...this.tuning };
   }
 
   /**
@@ -575,15 +617,33 @@ Use the conversation below to decide operations.`;
       try {
         await runScope('write', async () => {
           if (op.action === 'create') {
-            const created = await this.createMemory(op.content, {
-              relatedMemoryIds: op.relatedMemoryIds ?? [],
-            });
-            if (this.config.verbose) {
-              console.log('[Memory] verbose create:', {
-                id: created.id,
-                content: created.content,
-                relatedMemoryIds: op.relatedMemoryIds ?? [],
+            const gateMode = this.tuning.dedupGateMode;
+            const judgement = gateMode === 'off' ? null : await this.judgeDedupGate(op.content);
+            const skip = gateMode === 'active' && judgement?.wouldSkip === true;
+
+            let createdId: string | null = null;
+            if (skip) {
+              console.log('[Memory] dedup gate: skipped create', {
+                similarity: judgement?.match?.similarity,
+                matchedMemoryId: judgement?.match?.id,
               });
+            } else {
+              const created = await this.createMemory(op.content, {
+                relatedMemoryIds: op.relatedMemoryIds ?? [],
+                ...(judgement?.embedding ? { embedding: judgement.embedding } : {}),
+              });
+              createdId = created.id;
+              if (this.config.verbose) {
+                console.log('[Memory] verbose create:', {
+                  id: created.id,
+                  content: created.content,
+                  relatedMemoryIds: op.relatedMemoryIds ?? [],
+                });
+              }
+            }
+
+            if (judgement && (gateMode === 'shadow' || gateMode === 'active')) {
+              this.recordGateDecision(gateMode, op.content, judgement, skip, createdId);
             }
           } else if (op.action === 'update') {
             const updated = await this.updateMemory(op.memoryId, op.content);
@@ -618,6 +678,65 @@ Use the conversation below to decide operations.`;
         console.error('[Memory] operation error:', op.action, err);
       }
     }
+  }
+
+  /**
+   * Looks up the nearest existing memory for a creation candidate and judges
+   * whether it is a duplicate per the configured threshold.
+   *
+   * Mode-agnostic pure judgment — the caller decides how to act on it.
+   * Lookup failures never block creation: returns null and logs the error.
+   *
+   * @param content - Candidate memory content
+   * @returns Judgement with reusable embedding, or null when lookup failed
+   */
+  private async judgeDedupGate(content: string): Promise<DedupGateJudgement | null> {
+    try {
+      const { embedding, match } = await this.storage.findMostSimilarMemory(
+        content,
+        this.config.entityId,
+      );
+      const wouldSkip =
+        match?.similarity !== undefined && match.similarity >= this.tuning.dedupSkipThreshold;
+      if (this.config.verbose) {
+        console.log('[Memory] dedup gate judgement:', {
+          similarity: match?.similarity ?? null,
+          matchedMemoryId: match?.id ?? null,
+          threshold: this.tuning.dedupSkipThreshold,
+          wouldSkip,
+        });
+      }
+      return { embedding, match, wouldSkip };
+    } catch (err) {
+      console.error('[Memory] dedup gate lookup failed (creation proceeds):', err);
+      return null;
+    }
+  }
+
+  /**
+   * Records a dedup gate decision for audit and threshold calibration.
+   * Fire-and-forget: logging failures never affect the memory pipeline.
+   */
+  private recordGateDecision(
+    mode: 'shadow' | 'active',
+    content: string,
+    judgement: DedupGateJudgement,
+    skipped: boolean,
+    newMemoryId: string | null,
+  ): void {
+    const record: GateDecisionRecord = {
+      entityId: this.config.entityId,
+      mode,
+      decision: skipped ? 'skipped' : judgement.wouldSkip ? 'would_skip' : 'created',
+      similarity: judgement.match?.similarity ?? null,
+      matchedMemoryId: judgement.match?.id ?? null,
+      newMemoryId,
+      candidateContent: content,
+      threshold: this.tuning.dedupSkipThreshold,
+    };
+    this.storage.recordGateDecision(record).catch(err => {
+      console.error('[Memory] failed to record gate decision:', err);
+    });
   }
 
   /**
@@ -718,13 +837,14 @@ Use the conversation below to decide operations.`;
       throw new Error('Cannot create memory in read-only mode');
     }
 
-    const { autoLink = true, relatedMemoryIds = [] } = options;
+    const { autoLink = true, relatedMemoryIds = [], embedding } = options;
 
-    // Create memory (embedding is always generated when creating)
+    // Create memory (embedding is generated unless a precomputed one is provided)
     const memory = await this.storage.createMemory({
       entityId: this.config.entityId,
       content,
       outgoingEdges: [],
+      ...(embedding ? { embedding } : {}),
     });
 
     // Auto-link to related memories if enabled

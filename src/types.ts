@@ -153,6 +153,41 @@ export interface EdgeTraversalStat {
 }
 
 /**
+ * Outcome of a dedup gate decision
+ *
+ * - `created`: memory was created (no near-duplicate above threshold)
+ * - `would_skip`: near-duplicate found in shadow mode — logged only, memory still created
+ * - `skipped`: near-duplicate found in active mode — creation skipped
+ *
+ * @public
+ */
+export type GateDecision = 'created' | 'would_skip' | 'skipped';
+
+/**
+ * A dedup gate decision record for audit and threshold calibration
+ *
+ * @public
+ */
+export interface GateDecisionRecord {
+  /** Entity the candidate memory belongs to */
+  entityId: string;
+  /** Gate mode in effect at decision time ('shadow' | 'active') */
+  mode: 'shadow' | 'active';
+  /** Decision outcome */
+  decision: GateDecision;
+  /** Similarity to the nearest existing memory (null when entity has no comparable memory) */
+  similarity: number | null;
+  /** UUID of the nearest existing memory (null when none) */
+  matchedMemoryId: string | null;
+  /** UUID of the created memory (null when creation was skipped) */
+  newMemoryId: string | null;
+  /** Content of the candidate memory (kept for audit of skipped creations) */
+  candidateContent: string;
+  /** Dedup skip threshold in effect at decision time */
+  threshold: number;
+}
+
+/**
  * Options for running memory optimization
  *
  * @public

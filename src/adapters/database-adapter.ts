@@ -5,7 +5,7 @@
  * Implementations can use any database (PostgreSQL, Supabase, etc.)
  */
 
-import type { Memory, EdgeTraversalStat } from '../types';
+import type { Memory, EdgeTraversalStat, GateDecisionRecord } from '../types';
 
 /**
  * Database adapter interface for memory operations
@@ -147,4 +147,14 @@ export interface MemoryStorageAdapter {
    * @returns Array of edge traversal statistics
    */
   getEdgeTraversalStats(entityId: string): Promise<EdgeTraversalStat[]>;
+
+  /**
+   * Record a dedup gate decision
+   *
+   * @description Inserts one row per creation attempt evaluated by the dedup
+   * gate, for audit and threshold calibration.
+   *
+   * @param record - Gate decision record
+   */
+  recordGateDecision(record: GateDecisionRecord): Promise<void>;
 }

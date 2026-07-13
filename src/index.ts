@@ -17,6 +17,7 @@ export * from './adapters/ai-adapter';
 
 // Storage types and initialization
 export * from './storage/storage-types';
+export * from './tuning';
 export { Memory, memory } from './memory';
 export { MemoryStorage } from './memory/storage';
 export type { CreateMemoryOptions } from './memory/storage';
