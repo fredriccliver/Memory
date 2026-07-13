@@ -6,7 +6,7 @@
  */
 
 import type { MemoryStorageAdapter } from '../../adapters/database-adapter';
-import type { Memory, EdgeTraversalStat } from '../../types';
+import type { Memory, EdgeTraversalStat, GateDecisionRecord } from '../../types';
 import type { PostgresStorageConfig } from '../storage-types';
 import { initDatabase, ensureTablesExist } from '../migrations/postgres-init';
 
@@ -312,6 +312,34 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   /**
    * Maps database row to Memory object
    */
+  /**
+   * Record a dedup gate decision
+   *
+   * @description Inserts one audit row per creation attempt evaluated by the
+   * dedup gate. Used for threshold calibration and skip auditing.
+   *
+   * @param record - Gate decision record
+   */
+  async recordGateDecision(record: GateDecisionRecord): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    const query = `
+      INSERT INTO ${schema}.gate_decisions
+        (entity_id, mode, decision, similarity, matched_memory_id, new_memory_id, candidate_content, threshold)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `;
+
+    await this.client.query(query, [
+      record.entityId,
+      record.mode,
+      record.decision,
+      record.similarity,
+      record.matchedMemoryId,
+      record.newMemoryId,
+      record.candidateContent,
+      record.threshold,
+    ]);
+  }
+
   private mapRowToMemory(row: any): Memory {
     return {
       id: row.id,

@@ -39,7 +39,24 @@ export async function initDatabase(config: PostgresStorageConfig): Promise<any> 
  * @param schema - Schema name (default: 'memory' - recommended to separate from Application Layer)
  * @throws Error if initialization fails
  */
+/**
+ * Advisory lock key serializing memory DDL across processes.
+ * Concurrent cold starts running ensureTablesExist simultaneously can hit
+ * Postgres catalog conflicts ("tuple concurrently updated"); the lock makes
+ * one process run DDL while others wait, then no-op on IF NOT EXISTS.
+ */
+const MEMORY_DDL_LOCK_KEY = 810529641;
+
 export async function ensureTablesExist(client: any, schema: string = 'memory'): Promise<void> {
+  await client.query('SELECT pg_advisory_lock($1)', [MEMORY_DDL_LOCK_KEY]);
+  try {
+    await ensureTablesExistInner(client, schema);
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [MEMORY_DDL_LOCK_KEY]);
+  }
+}
+
+async function ensureTablesExistInner(client: any, schema: string): Promise<void> {
   // Enable pgvector extension
   await client.query('CREATE EXTENSION IF NOT EXISTS vector');
 
@@ -185,6 +202,32 @@ export async function ensureTablesExist(client: any, schema: string = 'memory'):
       WHERE mt.depth > 0
       ORDER BY mt.id, mt.depth ASC;
     $$;
+  `);
+
+  // Create dedup gate decisions table (audit + threshold calibration)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.gate_decisions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      similarity REAL,
+      matched_memory_id UUID,
+      new_memory_id UUID,
+      candidate_content TEXT NOT NULL,
+      threshold REAL NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_gate_decisions_entity_id
+    ON ${schema}.gate_decisions(entity_id)
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_gate_decisions_created_at
+    ON ${schema}.gate_decisions(created_at)
   `);
 
   // Create edge traversals table for tracking graph traversal statistics

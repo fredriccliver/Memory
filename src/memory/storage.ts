@@ -9,7 +9,7 @@
 import type { MemoryStorageAdapter } from '../adapters/database-adapter';
 import { Memory, SearchMode } from '../types';
 import { getThresholdFromMode } from '../types';
-import type { EdgeTraversalStat } from '../types';
+import type { EdgeTraversalStat, GateDecisionRecord } from '../types';
 import type { EmbeddingService } from '../vector/embedding-service';
 
 /**
@@ -250,5 +250,44 @@ export class MemoryStorage {
    */
   async getEdgeTraversalStats(entityId: string): Promise<EdgeTraversalStat[]> {
     return this.adapter.getEdgeTraversalStats(entityId);
+  }
+
+  /**
+   * Find the single most similar memory to the given content within an entity
+   *
+   * Generates an embedding for the content and returns it together with the
+   * nearest neighbor (no similarity threshold applied), so callers can reuse
+   * the embedding for a subsequent createMemory without a second embedding call.
+   *
+   * @param content - Content to compare against existing memories
+   * @param entityId - Entity ID to search within
+   * @returns Generated embedding and the most similar memory (null when none)
+   * @throws Error if embeddingService is not available
+   *
+   * @public
+   */
+  async findMostSimilarMemory(
+    content: string,
+    entityId: string,
+  ): Promise<{ embedding: number[]; match: Memory | null }> {
+    if (!this.embeddingService) {
+      throw new Error(
+        'EmbeddingService is required for findMostSimilarMemory. Provide embeddingService when initializing MemoryStorage.',
+      );
+    }
+    const embedding = await this.embeddingService.generateEmbedding(content);
+    const results = await this.adapter.searchByVector(embedding, entityId, 1, 0);
+    return { embedding, match: results[0] ?? null };
+  }
+
+  /**
+   * Record a dedup gate decision for audit and threshold calibration
+   *
+   * @param record - Gate decision record
+   *
+   * @public
+   */
+  async recordGateDecision(record: GateDecisionRecord): Promise<void> {
+    return this.adapter.recordGateDecision(record);
   }
 }
