@@ -9,27 +9,43 @@
 import type { PostgresStorageConfig } from '../storage-types';
 
 /**
- * Initializes PostgreSQL database connection
+ * Current memory schema version. Bump when ensureTablesExist DDL changes so
+ * booted processes re-run the (idempotent) DDL exactly once per version.
+ */
+export const MEMORY_SCHEMA_VERSION = 3;
+
+/**
+ * Initializes the PostgreSQL connection pool
+ *
+ * Uses a Pool (not a single Client) so concurrent queries in one process do
+ * not serialize on one connection, and dropped connections are replaced
+ * automatically instead of killing the memory layer for the process.
  *
  * @param config - PostgreSQL storage configuration
- * @returns PostgreSQL client instance
- * @throws Error if connection fails
+ * @returns PostgreSQL pool instance (query-compatible with the old Client)
+ * @throws Error if the initial connection fails
  */
 export async function initDatabase(config: PostgresStorageConfig): Promise<any> {
   // Dynamic import to avoid requiring pg as a dependency if not using PostgreSQL
-  const { Client } = await import('pg');
+  const { Pool } = await import('pg');
   const pgvector = await import('pgvector/pg');
 
-  const client = new Client({
+  const pool = new Pool({
     connectionString: config.connectionString,
   });
 
-  await client.connect();
+  // Fail fast on unreachable database and register pgvector result parsers.
+  // client.setTypeParser writes to pg's global, OID-keyed type registry, so a
+  // single registration covers every connection in the pool (same semantics
+  // as the previous single-Client setup).
+  const client = await pool.connect();
+  try {
+    await pgvector.registerType(client);
+  } finally {
+    client.release();
+  }
 
-  // Register pgvector types
-  await pgvector.registerType(client);
-
-  return client;
+  return pool;
 }
 
 /**
@@ -47,12 +63,52 @@ export async function initDatabase(config: PostgresStorageConfig): Promise<any> 
  */
 const MEMORY_DDL_LOCK_KEY = 810529641;
 
-export async function ensureTablesExist(client: any, schema: string = 'memory'): Promise<void> {
-  await client.query('SELECT pg_advisory_lock($1)', [MEMORY_DDL_LOCK_KEY]);
+/**
+ * Reads the stored schema version, or null when not initialized yet.
+ */
+async function readSchemaVersion(client: any, schema: string): Promise<number | null> {
+  const reg = await client.query('SELECT to_regclass($1) AS t', [`${schema}.schema_version`]);
+  if (!reg.rows[0]?.t) return null;
+  const res = await client.query(`SELECT version FROM ${schema}.schema_version LIMIT 1`);
+  return res.rows[0] ? Number(res.rows[0].version) : null;
+}
+
+/**
+ * Ensures required tables, indexes and functions exist.
+ *
+ * Version-gated: when the stored schema version equals MEMORY_SCHEMA_VERSION
+ * the DDL is skipped entirely (fast cold starts, no catalog writes). The
+ * whole check-and-migrate runs on ONE dedicated connection under an advisory
+ * lock — session-scoped locks would break if spread across pool connections.
+ *
+ * @param pool - PostgreSQL pool instance (from initDatabase)
+ * @param schema - Schema name (default: 'memory')
+ * @throws Error if initialization fails
+ */
+export async function ensureTablesExist(pool: any, schema: string = 'memory'): Promise<void> {
+  const client = await pool.connect();
   try {
-    await ensureTablesExistInner(client, schema);
+    await client.query('SELECT pg_advisory_lock($1)', [MEMORY_DDL_LOCK_KEY]);
+    try {
+      const current = await readSchemaVersion(client, schema);
+      if (current === MEMORY_SCHEMA_VERSION) {
+        return; // schema up to date — skip all DDL
+      }
+      await ensureTablesExistInner(client, schema);
+      await client.query(
+        `INSERT INTO ${schema}.schema_version (singleton, version, updated_at)
+         VALUES (TRUE, $1, NOW())
+         ON CONFLICT (singleton) DO UPDATE SET version = EXCLUDED.version, updated_at = NOW()`,
+        [MEMORY_SCHEMA_VERSION],
+      );
+      console.log(
+        `[Memory] schema migrated: v${current ?? 'none'} -> v${MEMORY_SCHEMA_VERSION}`,
+      );
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [MEMORY_DDL_LOCK_KEY]);
+    }
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [MEMORY_DDL_LOCK_KEY]);
+    client.release();
   }
 }
 
@@ -314,5 +370,100 @@ async function ensureTablesExistInner(client: any, schema: string): Promise<void
         AND NOT (mt.id = ANY(start_memory_ids))
       ORDER BY mt.id, mt.depth ASC;
     $$;
+  `);
+
+  // --- v2: usage-carved memory foundation ---------------------------------
+  // Node dynamic state (strength/decay anchors, retrieval stats, status).
+  // Additive with defaults: existing rows/readers are unaffected.
+  await client.query(`
+    ALTER TABLE ${schema}.memories
+      ADD COLUMN IF NOT EXISTS strength REAL NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS strength_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS retrieval_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_retrieved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
+  `);
+
+  // First-class edges. Edges are hypotheses: created cheap, strengthened by
+  // usage, decayed by disuse. Nothing reads this table until the ranked
+  // retrieval path ships; until then it is write-only.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.edges (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id TEXT NOT NULL,
+      from_id UUID NOT NULL REFERENCES ${schema}.memories(id) ON DELETE CASCADE,
+      to_id UUID NOT NULL REFERENCES ${schema}.memories(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'related',
+      origin TEXT NOT NULL,
+      strength REAL NOT NULL DEFAULT 0.5,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      strength_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (from_id, to_id, type)
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_edges_entity_id
+    ON ${schema}.edges(entity_id)
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_edges_from_id
+    ON ${schema}.edges(from_id)
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_edges_to_id
+    ON ${schema}.edges(to_id)
+  `);
+
+  // Sleep worker job queue. Verdict columns live on the job row so the queue
+  // doubles as the audit log (no separate audit table).
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.sleep_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      verdict JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_sleep_jobs_entity_status
+    ON ${schema}.sleep_jobs(entity_id, status)
+  `);
+
+  // --- v3: retrieval shadow comparison log --------------------------------
+  // One row per shadowed retrieval: legacy vs ranked result diff. Used to
+  // calibrate ranking weights before switching the live path. Transient —
+  // dropped once calibration is done.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.retrieval_shadow_log (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id TEXT NOT NULL,
+      query TEXT NOT NULL,
+      legacy_ids UUID[] NOT NULL,
+      ranked_ids UUID[] NOT NULL,
+      overlap INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_retrieval_shadow_log_created_at
+    ON ${schema}.retrieval_shadow_log(created_at)
+  `);
+
+  // Single-row schema version for the boot DDL gate.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${schema}.schema_version (
+      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+      version INTEGER NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
 }

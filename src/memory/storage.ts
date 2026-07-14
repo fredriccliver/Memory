@@ -9,7 +9,14 @@
 import type { MemoryStorageAdapter } from '../adapters/database-adapter';
 import { Memory, SearchMode } from '../types';
 import { getThresholdFromMode } from '../types';
-import type { EdgeTraversalStat, GateDecisionRecord } from '../types';
+import type {
+  EdgeTraversalStat,
+  GateDecisionRecord,
+  MemoryEdge,
+  MemoryEdgeInsert,
+  SleepJobInsert,
+  RetrievalShadowRecord,
+} from '../types';
 import type { EmbeddingService } from '../vector/embedding-service';
 
 /**
@@ -270,14 +277,77 @@ export class MemoryStorage {
     content: string,
     entityId: string,
   ): Promise<{ embedding: number[]; match: Memory | null }> {
+    const { embedding, matches } = await this.findMostSimilarMemories(content, entityId, 1);
+    return { embedding, match: matches[0] ?? null };
+  }
+
+  /**
+   * Find the k most similar memories to the given content within an entity
+   *
+   * Generates an embedding for the content and returns it together with the
+   * nearest neighbors ordered by similarity (no threshold applied), so
+   * callers can reuse the embedding for a subsequent createMemory.
+   *
+   * @param content - Content to compare against existing memories
+   * @param entityId - Entity ID to search within
+   * @param k - Maximum number of neighbors to return
+   * @returns Generated embedding and nearest neighbors (may be empty)
+   * @throws Error if embeddingService is not available
+   *
+   * @public
+   */
+  async findMostSimilarMemories(
+    content: string,
+    entityId: string,
+    k: number,
+  ): Promise<{ embedding: number[]; matches: Memory[] }> {
     if (!this.embeddingService) {
       throw new Error(
-        'EmbeddingService is required for findMostSimilarMemory. Provide embeddingService when initializing MemoryStorage.',
+        'EmbeddingService is required for findMostSimilarMemories. Provide embeddingService when initializing MemoryStorage.',
       );
     }
     const embedding = await this.embeddingService.generateEmbedding(content);
-    const results = await this.adapter.searchByVector(embedding, entityId, 1, 0);
-    return { embedding, match: results[0] ?? null };
+    const matches = await this.adapter.searchByVector(embedding, entityId, k, 0);
+    return { embedding, matches };
+  }
+
+  /**
+   * Increase a memory's own strength (clamped to 1.0)
+   *
+   * Used when a duplicate creation is skipped: the repeated mention is
+   * treated as reinforcement of the existing memory instead of a new node.
+   *
+   * @param memoryId - Memory UUID to reinforce
+   * @param amount - Amount to add (0-1)
+   *
+   * @public
+   */
+  async bumpMemoryStrength(memoryId: string, amount: number): Promise<void> {
+    return this.adapter.bumpMemoryStrength(memoryId, amount);
+  }
+
+  /**
+   * Enqueue a sleep worker job (e.g. merge review for a gray-zone pair)
+   *
+   * @param job - Job to enqueue
+   *
+   * @public
+   */
+  async enqueueSleepJob(job: SleepJobInsert): Promise<void> {
+    return this.adapter.enqueueSleepJob(job);
+  }
+
+  /**
+   * Delete an edge by its natural key
+   *
+   * @param fromId - Source memory UUID
+   * @param toId - Target memory UUID
+   * @param type - Edge type (default: 'related')
+   *
+   * @public
+   */
+  async deleteEdge(fromId: string, toId: string, type: string = 'related'): Promise<void> {
+    return this.adapter.deleteEdge(fromId, toId, type);
   }
 
   /**
@@ -289,5 +359,87 @@ export class MemoryStorage {
    */
   async recordGateDecision(record: GateDecisionRecord): Promise<void> {
     return this.adapter.recordGateDecision(record);
+  }
+
+  /**
+   * Insert edges idempotently (first-class edges table)
+   *
+   * @param edges - Edge inserts (defaults: type 'related', strength 0.5)
+   * @returns Number of rows actually inserted (conflicts excluded)
+   *
+   * @public
+   */
+  async insertEdges(edges: MemoryEdgeInsert[]): Promise<number> {
+    return this.adapter.insertEdges(edges);
+  }
+
+  /**
+   * Get all edges for an entity
+   *
+   * @param entityId - Entity ID to query
+   * @returns Edges ordered by creation time
+   *
+   * @public
+   */
+  async getEdgesByEntity(entityId: string): Promise<MemoryEdge[]> {
+    return this.adapter.getEdgesByEntity(entityId);
+  }
+
+  /**
+   * Get memories by their UUIDs
+   *
+   * @param memoryIds - Memory UUIDs
+   * @returns Matching memories (order not guaranteed)
+   *
+   * @public
+   */
+  async getMemoriesByIds(memoryIds: string[]): Promise<Memory[]> {
+    return this.adapter.getMemoriesByIds(memoryIds);
+  }
+
+  /**
+   * Get all edges touching any of the given memories (either direction)
+   *
+   * @param memoryIds - Memory UUIDs
+   * @returns Edges where either end is one of the given ids
+   *
+   * @public
+   */
+  async getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]> {
+    return this.adapter.getEdgesTouching(memoryIds);
+  }
+
+  /**
+   * Record that memories were retrieved (usage signal for ranking/forgetting)
+   *
+   * @param memoryIds - Retrieved memory UUIDs
+   *
+   * @public
+   */
+  async recordNodeRetrievals(memoryIds: string[]): Promise<void> {
+    return this.adapter.recordNodeRetrievals(memoryIds);
+  }
+
+  /**
+   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   *
+   * @param edgeIds - Edge UUIDs to bump
+   * @param amount - Amount to add (0-1)
+   *
+   * @public
+   */
+  async bumpEdgeStrengths(edgeIds: string[], amount: number): Promise<void> {
+    return this.adapter.bumpEdgeStrengths(edgeIds, amount);
+  }
+
+  /**
+   * Record a retrieval shadow comparison (legacy vs ranked)
+   *
+   * @param record - Shadow comparison record
+   *
+   * @public
+   */
+  async recordRetrievalShadow(record: RetrievalShadowRecord): Promise<void> {
+    return this.adapter.recordRetrievalShadow(record);
   }
 }

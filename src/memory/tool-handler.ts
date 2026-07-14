@@ -9,8 +9,11 @@
  */
 
 import type { MemoryStorage } from './storage';
-import type { Memory } from '../types';
+import type { Memory, MemoryEdgeInsert } from '../types';
 import { DynamicMemoryGenerator } from './generator';
+
+/** Initial strength of conversation-origin edges (mirrors connector constant) */
+const CONVERSATION_EDGE_STRENGTH = 0.7;
 
 /**
  * Parameters for creating a memory
@@ -173,6 +176,30 @@ export class MemoryToolHandler {
             }
           }),
         );
+
+        // Dual-write: mirror both directions into the edges table (kept in
+        // sync with the legacy arrays until the cleanup step retires them).
+        try {
+          const mirrored: MemoryEdgeInsert[] = params.relatedMemoryIds.flatMap(relatedId => [
+            {
+              entityId: params.entityId,
+              fromId: memory.id,
+              toId: relatedId,
+              origin: 'conversation' as const,
+              strength: CONVERSATION_EDGE_STRENGTH,
+            },
+            {
+              entityId: params.entityId,
+              fromId: relatedId,
+              toId: memory.id,
+              origin: 'conversation' as const,
+              strength: CONVERSATION_EDGE_STRENGTH,
+            },
+          ]);
+          await this.storage.insertEdges(mirrored);
+        } catch (err) {
+          console.error('[Memory] edge dual-write failed (array remains source of truth):', err);
+        }
       }
 
       return {
@@ -345,6 +372,26 @@ export class MemoryToolHandler {
         params.fromMemoryId,
         updatedEdges,
       );
+
+      // Dual-write: mirror the link change into the edges table (kept in
+      // sync with the legacy array until the cleanup step retires it).
+      try {
+        if (params.action === 'add') {
+          await this.storage.insertEdges([
+            {
+              entityId: fromMemory.entityId,
+              fromId: params.fromMemoryId,
+              toId: params.toMemoryId,
+              origin: 'conversation',
+              strength: CONVERSATION_EDGE_STRENGTH,
+            },
+          ]);
+        } else {
+          await this.storage.deleteEdge(params.fromMemoryId, params.toMemoryId, 'related');
+        }
+      } catch (err) {
+        console.error('[Memory] edge dual-write failed (array remains source of truth):', err);
+      }
 
       return {
         success: true,
