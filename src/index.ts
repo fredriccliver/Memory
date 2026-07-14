@@ -41,6 +41,8 @@ export type {
   DeleteMemoryParams,
   ToolHandlerResult,
 } from './memory/tool-handler';
+export { runRankedRetrieval, effectiveStrength } from './memory/ranked-retrieval';
+export type { RankedRetrievalResult } from './memory/ranked-retrieval';
 export { MemoryConsolidator, consolidateMemories } from './memory/consolidator';
 export type {
   ConsolidateMemoriesOptions,
