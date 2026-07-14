@@ -54,6 +54,16 @@ export interface Memory {
   createdAt: Date;
   /** Last update timestamp */
   updatedAt: Date;
+  /** Node's own strength 0-1 (usage-carved; decayed lazily at read time) */
+  strength?: number;
+  /** Last time strength was updated (bump/decay anchor) */
+  strengthUpdatedAt?: Date;
+  /** Number of times this memory was retrieved */
+  retrievalCount?: number;
+  /** Last time this memory was retrieved */
+  lastRetrievedAt?: Date | null;
+  /** Node status: 'active' | 'demoted' */
+  status?: string;
 }
 
 /**
@@ -150,6 +160,100 @@ export interface EdgeTraversalStat {
   traversalCount: number;
   /** Last time this edge was traversed */
   lastTraversedAt: Date;
+}
+
+/**
+ * Origin of a memory edge — how the relationship hypothesis was created
+ *
+ * - `conversation`: linked by the after-response LLM during chat
+ * - `knn_seed`: seeded from embedding nearest-neighbor lookup (hypothesis)
+ * - `sleep`: created/confirmed by the background sleep worker
+ * - `import`: created during bulk import
+ * - `legacy`: backfilled from the legacy outgoing_edges array
+ *
+ * @public
+ */
+export type MemoryEdgeOrigin = 'conversation' | 'knn_seed' | 'sleep' | 'import' | 'legacy';
+
+/**
+ * A first-class edge between two memories
+ *
+ * Edges are hypotheses: they enter cheap, usage strengthens them and disuse
+ * decays them (effective strength is computed lazily at read time).
+ *
+ * @public
+ */
+export interface MemoryEdge {
+  /** Edge UUID */
+  id: string;
+  /** Entity both memories belong to */
+  entityId: string;
+  /** Source memory UUID */
+  fromId: string;
+  /** Target memory UUID */
+  toId: string;
+  /** Edge type: 'related' (undirected meaning) | 'summary_of' | 'supersedes' | extensible */
+  type: string;
+  /** How this edge was created */
+  origin: MemoryEdgeOrigin;
+  /** Stored strength (0-1). Effective strength = strength decayed since strengthUpdatedAt */
+  strength: number;
+  /** Creation time */
+  createdAt: Date;
+  /** Last time strength was updated (bump/decay anchor) */
+  strengthUpdatedAt: Date;
+}
+
+/**
+ * Input for inserting a memory edge
+ *
+ * @public
+ */
+export interface MemoryEdgeInsert {
+  /** Entity both memories belong to */
+  entityId: string;
+  /** Source memory UUID */
+  fromId: string;
+  /** Target memory UUID */
+  toId: string;
+  /** Edge type (default: 'related') */
+  type?: string;
+  /** How this edge was created */
+  origin: MemoryEdgeOrigin;
+  /** Initial strength 0-1 (default: 0.5) */
+  strength?: number;
+}
+
+/**
+ * A retrieval shadow comparison record (legacy vs ranked results)
+ *
+ * @public
+ */
+export interface RetrievalShadowRecord {
+  /** Entity the retrieval belongs to */
+  entityId: string;
+  /** Query text used for retrieval */
+  query: string;
+  /** Memory UUIDs returned by the legacy path */
+  legacyIds: string[];
+  /** Memory UUIDs returned by the ranked path */
+  rankedIds: string[];
+  /** Number of UUIDs present in both results */
+  overlap: number;
+}
+
+/**
+ * Input for enqueuing a sleep worker job
+ *
+ * @public
+ */
+export interface SleepJobInsert {
+  /** Entity the job belongs to */
+  entityId: string;
+  /** Job kind: 'merge_review' | extensible */
+  kind: string;
+  /** Job payload (kind-specific) */
+  payload: Record<string, unknown>;
 }
 
 /**

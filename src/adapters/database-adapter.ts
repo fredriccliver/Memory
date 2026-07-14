@@ -5,7 +5,15 @@
  * Implementations can use any database (PostgreSQL, Supabase, etc.)
  */
 
-import type { Memory, EdgeTraversalStat, GateDecisionRecord } from '../types';
+import type {
+  Memory,
+  EdgeTraversalStat,
+  GateDecisionRecord,
+  MemoryEdge,
+  MemoryEdgeInsert,
+  SleepJobInsert,
+  RetrievalShadowRecord,
+} from '../types';
 
 /**
  * Database adapter interface for memory operations
@@ -157,4 +165,86 @@ export interface MemoryStorageAdapter {
    * @param record - Gate decision record
    */
   recordGateDecision(record: GateDecisionRecord): Promise<void>;
+
+  /**
+   * Insert edges idempotently
+   *
+   * @description ON CONFLICT (from_id, to_id, type) DO NOTHING — safe to
+   * re-run with overlapping input.
+   *
+   * @param edges - Edge inserts
+   * @returns Number of rows actually inserted
+   */
+  insertEdges(edges: MemoryEdgeInsert[]): Promise<number>;
+
+  /**
+   * Get all edges for an entity
+   *
+   * @param entityId - Entity ID to query
+   * @returns Edges ordered by creation time
+   */
+  getEdgesByEntity(entityId: string): Promise<MemoryEdge[]>;
+
+  /**
+   * Delete an edge by its natural key (from, to, type)
+   *
+   * @param fromId - Source memory UUID
+   * @param toId - Target memory UUID
+   * @param type - Edge type
+   */
+  deleteEdge(fromId: string, toId: string, type: string): Promise<void>;
+
+  /**
+   * Increase a memory's own strength (clamped to 1.0), updating the
+   * strength timestamp
+   *
+   * @param memoryId - Memory UUID to reinforce
+   * @param amount - Amount to add (0-1)
+   */
+  bumpMemoryStrength(memoryId: string, amount: number): Promise<void>;
+
+  /**
+   * Enqueue a sleep worker job
+   *
+   * @param job - Job to enqueue
+   */
+  enqueueSleepJob(job: SleepJobInsert): Promise<void>;
+
+  /**
+   * Get memories by their UUIDs
+   *
+   * @param memoryIds - Memory UUIDs
+   * @returns Matching memories (order not guaranteed)
+   */
+  getMemoriesByIds(memoryIds: string[]): Promise<Memory[]>;
+
+  /**
+   * Get all edges touching any of the given memories (either direction)
+   *
+   * @param memoryIds - Memory UUIDs
+   * @returns Edges where from_id or to_id is one of the given ids
+   */
+  getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]>;
+
+  /**
+   * Record that memories were retrieved (usage signal)
+   *
+   * @param memoryIds - Retrieved memory UUIDs
+   */
+  recordNodeRetrievals(memoryIds: string[]): Promise<void>;
+
+  /**
+   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   *
+   * @param edgeIds - Edge UUIDs to bump
+   * @param amount - Amount to add (0-1)
+   */
+  bumpEdgeStrengths(edgeIds: string[], amount: number): Promise<void>;
+
+  /**
+   * Record a retrieval shadow comparison (legacy vs ranked)
+   *
+   * @param record - Shadow comparison record
+   */
+  recordRetrievalShadow(record: RetrievalShadowRecord): Promise<void>;
 }

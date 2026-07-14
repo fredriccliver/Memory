@@ -6,7 +6,15 @@
  */
 
 import type { MemoryStorageAdapter } from '../../adapters/database-adapter';
-import type { Memory, EdgeTraversalStat, GateDecisionRecord } from '../../types';
+import type {
+  Memory,
+  EdgeTraversalStat,
+  GateDecisionRecord,
+  MemoryEdge,
+  MemoryEdgeInsert,
+  SleepJobInsert,
+  RetrievalShadowRecord,
+} from '../../types';
 import type { PostgresStorageConfig } from '../storage-types';
 import { initDatabase, ensureTablesExist } from '../migrations/postgres-init';
 
@@ -17,7 +25,7 @@ import { initDatabase, ensureTablesExist } from '../migrations/postgres-init';
  */
 export class PostgresAdapter implements MemoryStorageAdapter {
   private config: PostgresStorageConfig;
-  private client: any; // Will be typed as pg.Client after installing @types/pg
+  private client: any; // pg.Pool — .query()/.end() are Client-compatible; connections auto-recover
 
   /**
    * Creates a new PostgreSQL adapter
@@ -313,6 +321,195 @@ export class PostgresAdapter implements MemoryStorageAdapter {
    * Maps database row to Memory object
    */
   /**
+   * Insert edges idempotently (ON CONFLICT DO NOTHING on from/to/type)
+   *
+   * @param edges - Edge inserts (defaults: type 'related', strength 0.5)
+   * @returns Number of rows actually inserted (conflicts excluded)
+   */
+  async insertEdges(edges: MemoryEdgeInsert[]): Promise<number> {
+    if (edges.length === 0) return 0;
+
+    const schema = this.config.schema || 'memory';
+    const values: any[] = [];
+    const placeholders: string[] = [];
+    let i = 1;
+
+    for (const edge of edges) {
+      placeholders.push(`($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`);
+      values.push(
+        edge.entityId,
+        edge.fromId,
+        edge.toId,
+        edge.type ?? 'related',
+        edge.origin,
+        edge.strength ?? 0.5,
+      );
+    }
+
+    const result = await this.client.query(
+      `
+      INSERT INTO ${schema}.edges (entity_id, from_id, to_id, type, origin, strength)
+      VALUES ${placeholders.join(', ')}
+      ON CONFLICT (from_id, to_id, type) DO NOTHING
+      `,
+      values,
+    );
+
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Get all edges for an entity
+   *
+   * @param entityId - Entity ID to query
+   * @returns Edges ordered by creation time
+   */
+  async getEdgesByEntity(entityId: string): Promise<MemoryEdge[]> {
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      SELECT id, entity_id, from_id, to_id, type, origin, strength, created_at, strength_updated_at
+      FROM ${schema}.edges
+      WHERE entity_id = $1
+      ORDER BY created_at
+      `,
+      [entityId],
+    );
+
+    return result.rows.map((row: any) => this.mapRowToEdge(row));
+  }
+
+  private mapRowToEdge(row: any): MemoryEdge {
+    return {
+      id: row.id,
+      entityId: row.entity_id,
+      fromId: row.from_id,
+      toId: row.to_id,
+      type: row.type,
+      origin: row.origin,
+      strength: Number(row.strength),
+      createdAt: row.created_at,
+      strengthUpdatedAt: row.strength_updated_at,
+    };
+  }
+
+  /**
+   * Get memories by their UUIDs
+   */
+  async getMemoriesByIds(memoryIds: string[]): Promise<Memory[]> {
+    if (memoryIds.length === 0) return [];
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `SELECT * FROM ${schema}.memories WHERE id = ANY($1)`,
+      [memoryIds],
+    );
+    return result.rows.map((row: any) => this.mapRowToMemory(row));
+  }
+
+  /**
+   * Get all edges touching any of the given memories (either direction)
+   */
+  async getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]> {
+    if (memoryIds.length === 0) return [];
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      SELECT id, entity_id, from_id, to_id, type, origin, strength, created_at, strength_updated_at
+      FROM ${schema}.edges
+      WHERE from_id = ANY($1) OR to_id = ANY($1)
+      `,
+      [memoryIds],
+    );
+    return result.rows.map((row: any) => this.mapRowToEdge(row));
+  }
+
+  /**
+   * Record that memories were retrieved (usage signal for ranking/forgetting)
+   */
+  async recordNodeRetrievals(memoryIds: string[]): Promise<void> {
+    if (memoryIds.length === 0) return;
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `
+      UPDATE ${schema}.memories
+      SET retrieval_count = retrieval_count + 1,
+          last_retrieved_at = NOW()
+      WHERE id = ANY($1)
+      `,
+      [memoryIds],
+    );
+  }
+
+  /**
+   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   */
+  async bumpEdgeStrengths(edgeIds: string[], amount: number): Promise<void> {
+    if (edgeIds.length === 0) return;
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `
+      UPDATE ${schema}.edges
+      SET strength = LEAST(1.0, strength + $2),
+          strength_updated_at = NOW()
+      WHERE id = ANY($1)
+      `,
+      [edgeIds, amount],
+    );
+  }
+
+  /**
+   * Record a retrieval shadow comparison (legacy vs ranked)
+   */
+  async recordRetrievalShadow(record: RetrievalShadowRecord): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `
+      INSERT INTO ${schema}.retrieval_shadow_log (entity_id, query, legacy_ids, ranked_ids, overlap)
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [record.entityId, record.query, record.legacyIds, record.rankedIds, record.overlap],
+    );
+  }
+
+  /**
+   * Delete an edge by its natural key (from, to, type)
+   */
+  async deleteEdge(fromId: string, toId: string, type: string): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `DELETE FROM ${schema}.edges WHERE from_id = $1 AND to_id = $2 AND type = $3`,
+      [fromId, toId, type],
+    );
+  }
+
+  /**
+   * Increase a memory's own strength (clamped to 1.0)
+   */
+  async bumpMemoryStrength(memoryId: string, amount: number): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `
+      UPDATE ${schema}.memories
+      SET strength = LEAST(1.0, strength + $2),
+          strength_updated_at = NOW()
+      WHERE id = $1
+      `,
+      [memoryId, amount],
+    );
+  }
+
+  /**
+   * Enqueue a sleep worker job
+   */
+  async enqueueSleepJob(job: SleepJobInsert): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `INSERT INTO ${schema}.sleep_jobs (entity_id, kind, payload) VALUES ($1, $2, $3)`,
+      [job.entityId, job.kind, JSON.stringify(job.payload)],
+    );
+  }
+
+  /**
    * Record a dedup gate decision
    *
    * @description Inserts one audit row per creation attempt evaluated by the
@@ -355,6 +552,15 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       similarity: row.similarity !== undefined ? Number(row.similarity) : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      // Dynamic state columns (v2+); undefined when selecting from older schemas
+      strength: row.strength !== undefined && row.strength !== null ? Number(row.strength) : undefined,
+      strengthUpdatedAt: row.strength_updated_at ?? undefined,
+      retrievalCount:
+        row.retrieval_count !== undefined && row.retrieval_count !== null
+          ? Number(row.retrieval_count)
+          : undefined,
+      lastRetrievedAt: row.last_retrieved_at ?? undefined,
+      status: row.status ?? undefined,
     };
   }
 }
