@@ -16,6 +16,7 @@ import type {
   GateDecisionRecord,
 } from '../types';
 import { normalizeMemoryTuning, type MemoryTuning } from '../tuning';
+import { runRankedRetrieval } from './ranked-retrieval';
 
 /**
  * Configuration for Memory Connector
@@ -90,18 +91,31 @@ export interface CreateMemoryOptions {
 /**
  * Result of a dedup gate lookup for a creation candidate.
  * Mode-agnostic: contains the judgment only; how it is acted on
- * (log-only vs skip) is decided by the caller based on the gate mode.
+ * (log-only vs skip/link/seed) is decided by the caller based on the gate mode.
  *
  * @internal
  */
 interface DedupGateJudgement {
   /** Embedding generated for the candidate content (reusable for creation) */
   embedding: number[];
+  /** Nearest existing memories ordered by similarity (seed candidates) */
+  matches: Memory[];
   /** Most similar existing memory, if any */
-  match: Memory | null;
-  /** Whether the candidate is a duplicate per the configured threshold */
+  top: Memory | null;
+  /** Duplicate band: top similarity >= dedupSkipThreshold */
   wouldSkip: boolean;
+  /** Gray zone band: dedupLinkThreshold <= top similarity < dedupSkipThreshold */
+  inGrayZone: boolean;
 }
+
+/** Node strength added when a duplicate mention reinforces an existing memory */
+const NODE_STRENGTH_BUMP = 0.1;
+/** Initial strength of the gray-zone edge to the nearest neighbor (pending merge review) */
+const GRAY_ZONE_EDGE_STRENGTH = 0.8;
+/** Initial strength of conversation-origin edges (LLM-decided links) */
+const CONVERSATION_EDGE_STRENGTH = 0.7;
+/** Edge strength added when an edge contributes to a served ranked retrieval */
+const EDGE_USAGE_BUMP = 0.05;
 
 /**
  * Callback function for context change detection
@@ -624,15 +638,26 @@ Use the conversation below to decide operations.`;
             let createdId: string | null = null;
             if (skip) {
               console.log('[Memory] dedup gate: skipped create', {
-                similarity: judgement?.match?.similarity,
-                matchedMemoryId: judgement?.match?.id,
+                similarity: judgement?.top?.similarity,
+                matchedMemoryId: judgement?.top?.id,
               });
+              // Duplicate mention = reinforcement signal for the existing memory
+              if (judgement?.top) {
+                try {
+                  await this.storage.bumpMemoryStrength(judgement.top.id, NODE_STRENGTH_BUMP);
+                } catch (err) {
+                  console.error('[Memory] strength bump failed:', err);
+                }
+              }
             } else {
               const created = await this.createMemory(op.content, {
                 relatedMemoryIds: op.relatedMemoryIds ?? [],
                 ...(judgement?.embedding ? { embedding: judgement.embedding } : {}),
               });
               createdId = created.id;
+              if (gateMode === 'active' && judgement) {
+                await this.applyPostCreateGateActions(created.id, judgement);
+              }
               if (this.config.verbose) {
                 console.log('[Memory] verbose create:', {
                   id: created.id,
@@ -681,8 +706,8 @@ Use the conversation below to decide operations.`;
   }
 
   /**
-   * Looks up the nearest existing memory for a creation candidate and judges
-   * whether it is a duplicate per the configured threshold.
+   * Looks up the nearest existing memories for a creation candidate and
+   * judges which similarity band it falls into.
    *
    * Mode-agnostic pure judgment — the caller decides how to act on it.
    * Lookup failures never block creation: returns null and logs the error.
@@ -692,24 +717,101 @@ Use the conversation below to decide operations.`;
    */
   private async judgeDedupGate(content: string): Promise<DedupGateJudgement | null> {
     try {
-      const { embedding, match } = await this.storage.findMostSimilarMemory(
+      const { embedding, matches } = await this.storage.findMostSimilarMemories(
         content,
         this.config.entityId,
+        Math.max(this.tuning.seedK, 1),
       );
+      const top = matches[0] ?? null;
       const wouldSkip =
-        match?.similarity !== undefined && match.similarity >= this.tuning.dedupSkipThreshold;
+        top?.similarity !== undefined && top.similarity >= this.tuning.dedupSkipThreshold;
+      const inGrayZone =
+        !wouldSkip &&
+        top?.similarity !== undefined &&
+        top.similarity >= this.tuning.dedupLinkThreshold;
       if (this.config.verbose) {
         console.log('[Memory] dedup gate judgement:', {
-          similarity: match?.similarity ?? null,
-          matchedMemoryId: match?.id ?? null,
+          similarity: top?.similarity ?? null,
+          matchedMemoryId: top?.id ?? null,
           threshold: this.tuning.dedupSkipThreshold,
           wouldSkip,
+          inGrayZone,
+          neighbors: matches.length,
         });
       }
-      return { embedding, match, wouldSkip };
+      return { embedding, matches, top, wouldSkip, inGrayZone };
     } catch (err) {
       console.error('[Memory] dedup gate lookup failed (creation proceeds):', err);
       return null;
+    }
+  }
+
+  /**
+   * Post-create gate actions (active mode only):
+   * - gray zone: high-strength edge to the nearest neighbor + merge review job
+   * - otherwise: kNN edge seeding (strength = similarity) for neighbors
+   *   at/above the seed floor
+   *
+   * Edges are hypotheses written to the edges table only (never to the legacy
+   * outgoing_edges array — unverified links must not affect legacy traversal).
+   * Failures never affect the already-created memory.
+   */
+  private async applyPostCreateGateActions(
+    newMemoryId: string,
+    judgement: DedupGateJudgement,
+  ): Promise<void> {
+    const entityId = this.config.entityId;
+    try {
+      if (judgement.inGrayZone && judgement.top) {
+        await this.storage.insertEdges([
+          {
+            entityId,
+            fromId: newMemoryId,
+            toId: judgement.top.id,
+            origin: 'knn_seed',
+            strength: GRAY_ZONE_EDGE_STRENGTH,
+          },
+        ]);
+        await this.storage.enqueueSleepJob({
+          entityId,
+          kind: 'merge_review',
+          payload: {
+            newMemoryId,
+            matchedMemoryId: judgement.top.id,
+            similarity: judgement.top.similarity ?? null,
+          },
+        });
+        if (this.config.verbose) {
+          console.log('[Memory] dedup gate: gray zone → linked + merge review queued', {
+            newMemoryId,
+            matchedMemoryId: judgement.top.id,
+            similarity: judgement.top.similarity,
+          });
+        }
+      } else {
+        const seeds = judgement.matches.filter(
+          m =>
+            m.id !== newMemoryId &&
+            m.similarity !== undefined &&
+            m.similarity >= this.tuning.seedSimilarityFloor,
+        );
+        if (seeds.length > 0) {
+          const inserted = await this.storage.insertEdges(
+            seeds.map(m => ({
+              entityId,
+              fromId: newMemoryId,
+              toId: m.id,
+              origin: 'knn_seed' as const,
+              strength: Math.min(1, Math.max(0, m.similarity as number)),
+            })),
+          );
+          if (this.config.verbose) {
+            console.log('[Memory] dedup gate: seeded knn edges:', inserted);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Memory] post-create gate actions failed:', err);
     }
   }
 
@@ -728,8 +830,8 @@ Use the conversation below to decide operations.`;
       entityId: this.config.entityId,
       mode,
       decision: skipped ? 'skipped' : judgement.wouldSkip ? 'would_skip' : 'created',
-      similarity: judgement.match?.similarity ?? null,
-      matchedMemoryId: judgement.match?.id ?? null,
+      similarity: judgement.top?.similarity ?? null,
+      matchedMemoryId: judgement.top?.id ?? null,
       newMemoryId,
       candidateContent: content,
       threshold: this.tuning.dedupSkipThreshold,
@@ -742,7 +844,13 @@ Use the conversation below to decide operations.`;
   /**
    * Gets memory context for the current conversation
    *
-   * Automatically searches for relevant memories using vector search and graph traversal.
+   * Dispatches on tuning.retrievalMode:
+   * - legacy (default): original vector-threshold + array-graph retrieval
+   * - shadow: legacy result is served; ranked runs side-effect-free in
+   *   parallel and the comparison is logged (calibration)
+   * - ranked: usage-carved ranked retrieval is served
+   *
+   * Node retrieval usage is recorded on whichever path is live.
    *
    * @param conversationContext - Current conversation context string
    * @returns Memory context with retrieved memories and template
@@ -750,6 +858,94 @@ Use the conversation below to decide operations.`;
    * @public
    */
   async getContext(conversationContext: string): Promise<MemoryContext> {
+    const mode = this.tuning.retrievalMode;
+    if (mode === 'ranked') {
+      return this.getContextRanked(conversationContext);
+    }
+    const legacy = await this.getContextLegacy(conversationContext);
+    if (mode === 'shadow') {
+      // Fire-and-forget: shadow comparison must never affect the live result
+      this.runRetrievalShadow(conversationContext, legacy.memories).catch(err => {
+        console.error('[Memory] retrieval shadow failed:', err);
+      });
+    }
+    return legacy;
+  }
+
+  /**
+   * Ranked retrieval path (live): serves ranked results and records usage
+   * signals — node retrievals and contributing-edge strength bumps.
+   */
+  private async getContextRanked(conversationContext: string): Promise<MemoryContext> {
+    const { memories, contributingEdgeIds } = await runRankedRetrieval(
+      this.storage,
+      this.config.entityId,
+      conversationContext,
+      this.tuning,
+      this.config.maxMemoryCount || 50,
+    );
+
+    // Usage side effects (fire-and-forget — never block the chat path)
+    if (memories.length > 0) {
+      this.storage.recordNodeRetrievals(memories.map(m => m.id)).catch(err => {
+        console.error('[Memory] failed to record node retrievals:', err);
+      });
+    }
+    if (contributingEdgeIds.length > 0) {
+      this.storage.bumpEdgeStrengths(contributingEdgeIds, EDGE_USAGE_BUMP).catch(err => {
+        console.error('[Memory] failed to bump edge strengths:', err);
+      });
+    }
+
+    const template = this.generateTemplate(memories, conversationContext, true);
+    return {
+      memories,
+      template,
+      searchQuery: conversationContext,
+      isFromVectorSearch: true,
+    };
+  }
+
+  /**
+   * Shadow comparison: run ranked retrieval side-effect-free and log the
+   * diff against the served legacy result.
+   */
+  private async runRetrievalShadow(
+    conversationContext: string,
+    legacyMemories: Memory[],
+  ): Promise<void> {
+    const { memories: ranked } = await runRankedRetrieval(
+      this.storage,
+      this.config.entityId,
+      conversationContext,
+      this.tuning,
+      this.config.maxMemoryCount || 50,
+    );
+    const legacyIds = legacyMemories.map(m => m.id);
+    const rankedIds = ranked.map(m => m.id);
+    const rankedSet = new Set(rankedIds);
+    const overlap = legacyIds.filter(id => rankedSet.has(id)).length;
+    await this.storage.recordRetrievalShadow({
+      entityId: this.config.entityId,
+      query: conversationContext,
+      legacyIds,
+      rankedIds,
+      overlap,
+    });
+    if (this.config.verbose) {
+      console.log('[Memory] retrieval shadow:', {
+        legacy: legacyIds.length,
+        ranked: rankedIds.length,
+        overlap,
+      });
+    }
+  }
+
+  /**
+   * Legacy retrieval path: vector search (fixed threshold) + array-graph
+   * traversal. Unchanged behavior; node retrieval usage recording added.
+   */
+  private async getContextLegacy(conversationContext: string): Promise<MemoryContext> {
     // Vector search for relevant memories
     const vectorMemories = await this.storage.searchByQuery(
       conversationContext,
@@ -806,9 +1002,14 @@ Use the conversation below to decide operations.`;
         });
     }
 
+    // Usage signal: record node retrievals on the live path (fire-and-forget)
+    if (memories.length > 0) {
+      this.storage.recordNodeRetrievals(memories.map(m => m.id)).catch(err => {
+        console.error('[Memory] failed to record node retrievals:', err);
+      });
+    }
+
     // Generate template for system prompt
-    // Track which memories came from vector search vs graph traversal
-    const vectorMemoryIds = new Set(vectorMemories.map(m => m.id));
     const template = this.generateTemplate(memories, conversationContext, true);
 
     return {
@@ -851,6 +1052,21 @@ Use the conversation below to decide operations.`;
     if (autoLink && relatedMemoryIds.length > 0) {
       const outgoingEdges = [...memory.outgoingEdges, ...relatedMemoryIds];
       await this.storage.updateOutgoingEdges(memory.id, outgoingEdges);
+      // Dual-write: mirror conversation links into the edges table (kept in
+      // sync with the legacy array until the cleanup step retires the array).
+      try {
+        await this.storage.insertEdges(
+          relatedMemoryIds.map(toId => ({
+            entityId: this.config.entityId,
+            fromId: memory.id,
+            toId,
+            origin: 'conversation' as const,
+            strength: CONVERSATION_EDGE_STRENGTH,
+          })),
+        );
+      } catch (err) {
+        console.error('[Memory] edge dual-write failed (array remains source of truth):', err);
+      }
     }
 
     return memory;
@@ -934,7 +1150,29 @@ Use the conversation below to decide operations.`;
       edges = edges.filter(id => id !== toMemoryId);
     }
 
-    return this.storage.updateOutgoingEdges(fromMemoryId, edges);
+    const updated = await this.storage.updateOutgoingEdges(fromMemoryId, edges);
+
+    // Dual-write: mirror the link change into the edges table (kept in sync
+    // with the legacy array until the cleanup step retires the array).
+    try {
+      if (action === 'add') {
+        await this.storage.insertEdges([
+          {
+            entityId: this.config.entityId,
+            fromId: fromMemoryId,
+            toId: toMemoryId,
+            origin: 'conversation',
+            strength: CONVERSATION_EDGE_STRENGTH,
+          },
+        ]);
+      } else {
+        await this.storage.deleteEdge(fromMemoryId, toMemoryId, 'related');
+      }
+    } catch (err) {
+      console.error('[Memory] edge dual-write failed (array remains source of truth):', err);
+    }
+
+    return updated;
   }
 
   /**
