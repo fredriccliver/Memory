@@ -9,6 +9,7 @@
 -- Destroys: all rows in memory.edges / memory.sleep_jobs, the added
 -- node columns (and their values), and the version gate row.
 
+DROP TABLE IF EXISTS memory.retrieval_shadow_log; -- v3 (0004)
 DROP TABLE IF EXISTS memory.sleep_jobs;
 DROP TABLE IF EXISTS memory.edges;
 DROP TABLE IF EXISTS memory.schema_version;

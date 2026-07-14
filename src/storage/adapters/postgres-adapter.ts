@@ -321,10 +321,14 @@ export class PostgresAdapter implements MemoryStorageAdapter {
    * Maps database row to Memory object
    */
   /**
-   * Insert edges idempotently (ON CONFLICT DO NOTHING on from/to/type)
+   * Insert edges idempotently. On conflict (from/to/type) the stored strength
+   * is raised to the maximum of both values — a re-confirmed link (e.g. a
+   * conversation link over a backfilled hypothesis) upgrades strength while
+   * the original origin (provenance) is preserved. Strength never decreases,
+   * so re-running lower-strength inserts (backfill) stays a no-op.
    *
    * @param edges - Edge inserts (defaults: type 'related', strength 0.5)
-   * @returns Number of rows actually inserted (conflicts excluded)
+   * @returns Number of rows inserted or strengthened
    */
   async insertEdges(edges: MemoryEdgeInsert[]): Promise<number> {
     if (edges.length === 0) return 0;
@@ -350,7 +354,10 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       `
       INSERT INTO ${schema}.edges (entity_id, from_id, to_id, type, origin, strength)
       VALUES ${placeholders.join(', ')}
-      ON CONFLICT (from_id, to_id, type) DO NOTHING
+      ON CONFLICT (from_id, to_id, type) DO UPDATE SET
+        strength = GREATEST(${schema}.edges.strength, EXCLUDED.strength),
+        strength_updated_at = NOW()
+      WHERE EXCLUDED.strength > ${schema}.edges.strength
       `,
       values,
     );
