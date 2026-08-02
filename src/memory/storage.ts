@@ -312,6 +312,41 @@ export class MemoryStorage {
   }
 
   /**
+   * Generate embeddings for a batch of texts in one provider call.
+   *
+   * Used by bulk planning where per-item embedding calls would be wasteful.
+   *
+   * @param texts - Texts to embed (order preserved in the result)
+   * @returns One embedding per input text
+   * @throws Error if no embedding service was provided
+   *
+   * @public
+   */
+  async embedContents(texts: string[]): Promise<number[][]> {
+    if (!this.embeddingService) {
+      throw new Error(
+        'EmbeddingService is required for embedContents. Provide embeddingService when initializing MemoryStorage.',
+      );
+    }
+    if (texts.length === 0) return [];
+    return this.embeddingService.generateEmbeddings(texts);
+  }
+
+  /**
+   * Vector search with a precomputed embedding (no internal embedding call).
+   *
+   * @param embedding - Query embedding
+   * @param entityId - Entity to search within
+   * @param k - Maximum number of matches
+   * @returns Top-k memories with `similarity` populated, most similar first
+   *
+   * @public
+   */
+  async searchByEmbedding(embedding: number[], entityId: string, k: number): Promise<Memory[]> {
+    return this.adapter.searchByVector(embedding, entityId, k, 0);
+  }
+
+  /**
    * Increase a memory's own strength (clamped to 1.0)
    *
    * Used when a duplicate creation is skipped: the repeated mention is
