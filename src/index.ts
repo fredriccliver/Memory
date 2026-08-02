@@ -43,6 +43,15 @@ export type {
 } from './memory/tool-handler';
 export { runRankedRetrieval, effectiveStrength } from './memory/ranked-retrieval';
 export type { RankedRetrievalResult } from './memory/ranked-retrieval';
+export { planBulkCreate } from './memory/bulk-plan';
+export type {
+  BulkPlan,
+  BulkPlanItem,
+  BulkPlanOptions,
+  BulkPlanNode,
+  BulkPlanEdge,
+  BulkPlanStats,
+} from './memory/bulk-plan';
 export { MemoryConsolidator, consolidateMemories } from './memory/consolidator';
 export type {
   ConsolidateMemoriesOptions,

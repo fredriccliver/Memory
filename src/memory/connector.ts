@@ -113,7 +113,7 @@ const NODE_STRENGTH_BUMP = 0.1;
 /** Initial strength of the gray-zone edge to the nearest neighbor (pending merge review) */
 const GRAY_ZONE_EDGE_STRENGTH = 0.8;
 /** Initial strength of conversation-origin edges (LLM-decided links) */
-const CONVERSATION_EDGE_STRENGTH = 0.7;
+export const CONVERSATION_EDGE_STRENGTH = 0.7;
 /** Edge strength added when an edge contributes to a served ranked retrieval */
 const EDGE_USAGE_BUMP = 0.05;
 
