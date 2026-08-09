@@ -139,6 +139,21 @@ export class MemoryStorage {
   }
 
   /**
+   * Count memories for an entity without loading rows
+   *
+   * Unlike getMemoriesByEntity, no row payloads (embeddings included) are
+   * transferred, so this stays cheap for entities with many memories.
+   *
+   * @param entityId - Entity ID (TEXT, not UUID - e.g., persona ID, user ID, etc.)
+   * @returns Number of memories stored for the entity
+   *
+   * @public
+   */
+  async countMemoriesByEntity(entityId: string): Promise<number> {
+    return this.adapter.countMemoriesByEntity(entityId);
+  }
+
+  /**
    * Search memories by vector similarity
    *
    * Automatically generates query embedding if embeddingService is available.
@@ -418,6 +433,18 @@ export class MemoryStorage {
    */
   async getEdgesByEntity(entityId: string): Promise<MemoryEdge[]> {
     return this.adapter.getEdgesByEntity(entityId);
+  }
+
+  /**
+   * Count edges for an entity without loading rows
+   *
+   * @param entityId - Entity ID to query
+   * @returns Number of edges stored for the entity
+   *
+   * @public
+   */
+  async countEdgesByEntity(entityId: string): Promise<number> {
+    return this.adapter.countEdgesByEntity(entityId);
   }
 
   /**

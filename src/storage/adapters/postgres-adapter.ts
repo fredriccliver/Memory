@@ -180,6 +180,18 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     return result.rows.map((row: any) => this.mapRowToMemory(row));
   }
 
+  async countMemoriesByEntity(entityId: string): Promise<number> {
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT count(*)::int AS count
+      FROM ${schema}.memories
+      WHERE entity_id = $1
+    `;
+
+    const result = await this.client.query(query, [entityId]);
+    return result.rows[0].count;
+  }
+
   async searchByVector(
     embedding: number[],
     entityId: string,
@@ -384,6 +396,18 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     );
 
     return result.rows.map((row: any) => this.mapRowToEdge(row));
+  }
+
+  async countEdgesByEntity(entityId: string): Promise<number> {
+    const schema = this.config.schema || 'memory';
+    const query = `
+      SELECT count(*)::int AS count
+      FROM ${schema}.edges
+      WHERE entity_id = $1
+    `;
+
+    const result = await this.client.query(query, [entityId]);
+    return result.rows[0].count;
   }
 
   private mapRowToEdge(row: any): MemoryEdge {

@@ -66,6 +66,14 @@ export interface MemoryStorageAdapter {
   getMemoriesByEntity(entityId: string): Promise<Memory[]>;
 
   /**
+   * Count memories for an entity
+   *
+   * @param entityId - Entity ID (TEXT, not UUID - e.g., persona ID, user ID, etc.)
+   * @returns Number of memories stored for the entity
+   */
+  countMemoriesByEntity(entityId: string): Promise<number>;
+
+  /**
    * Search memories by vector similarity
    *
    * @param embedding - Query embedding vector
@@ -184,6 +192,14 @@ export interface MemoryStorageAdapter {
    * @returns Edges ordered by creation time
    */
   getEdgesByEntity(entityId: string): Promise<MemoryEdge[]>;
+
+  /**
+   * Count edges for an entity
+   *
+   * @param entityId - Entity ID to query
+   * @returns Number of edges stored for the entity
+   */
+  countEdgesByEntity(entityId: string): Promise<number>;
 
   /**
    * Delete an edge by its natural key (from, to, type)
