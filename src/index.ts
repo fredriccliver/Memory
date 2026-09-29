@@ -41,8 +41,20 @@ export type {
   DeleteMemoryParams,
   ToolHandlerResult,
 } from './memory/tool-handler';
-export { runRankedRetrieval, effectiveStrength } from './memory/ranked-retrieval';
+export {
+  runRankedRetrieval,
+  effectiveStrength,
+  DEMOTED_SCORE_FACTOR,
+} from './memory/ranked-retrieval';
 export type { RankedRetrievalResult } from './memory/ranked-retrieval';
+export { runSleep, normalizeSleepConfig, DEFAULT_SLEEP_CONFIG } from './memory/sleep';
+export type {
+  SleepConfig,
+  SleepRunOptions,
+  SleepRunReason,
+  SleepRunResult,
+  SleepJobVerdict,
+} from './memory/sleep';
 export { planBulkCreate } from './memory/bulk-plan';
 export type {
   BulkPlan,
