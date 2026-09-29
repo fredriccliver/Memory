@@ -115,9 +115,7 @@ export class MemoryToolHandler {
    *
    * @public
    */
-  async handleCreateMemory(
-    params: CreateMemoryParams,
-  ): Promise<ToolHandlerResult<Memory>> {
+  async handleCreateMemory(params: CreateMemoryParams): Promise<ToolHandlerResult<Memory>> {
     try {
       // Validate parameters
       if (!params.content || params.content.trim().length === 0) {
@@ -226,9 +224,7 @@ export class MemoryToolHandler {
    *
    * @public
    */
-  async handleUpdateMemory(
-    params: UpdateMemoryParams,
-  ): Promise<ToolHandlerResult<Memory>> {
+  async handleUpdateMemory(params: UpdateMemoryParams): Promise<ToolHandlerResult<Memory>> {
     try {
       // Validate parameters
       if (!params.memoryId || params.memoryId.trim().length === 0) {
@@ -284,9 +280,7 @@ export class MemoryToolHandler {
    *
    * @public
    */
-  async handleUpdateMemoryLink(
-    params: UpdateMemoryLinkParams,
-  ): Promise<ToolHandlerResult<Memory>> {
+  async handleUpdateMemoryLink(params: UpdateMemoryLinkParams): Promise<ToolHandlerResult<Memory>> {
     try {
       // Validate parameters
       if (!params.fromMemoryId || params.fromMemoryId.trim().length === 0) {
@@ -408,17 +402,17 @@ export class MemoryToolHandler {
   /**
    * Handles deleteMemory tool call
    *
-   * Deletes a memory and cleans up related connections.
+   * Soft delete: demotes the memory (ranking penalty) instead of removing it.
+   * Links stay in place; a later re-mention bump restores the node. Physical
+   * deletion is a host-only explicit storage operation.
    *
    * @param params - Delete memory parameters
-   * @param params.memoryId - Memory UUID to delete (not table index)
+   * @param params.memoryId - Memory UUID to demote (not table index)
    * @returns Tool handler result
    *
    * @public
    */
-  async handleDeleteMemory(
-    params: DeleteMemoryParams,
-  ): Promise<ToolHandlerResult<void>> {
+  async handleDeleteMemory(params: DeleteMemoryParams): Promise<ToolHandlerResult<void>> {
     try {
       // Validate parameters
       if (!params.memoryId || params.memoryId.trim().length === 0) {
@@ -437,31 +431,7 @@ export class MemoryToolHandler {
         };
       }
 
-      // Find all memories that have this memory in their outgoingEdges
-      // and remove the link
-      const allMemories = await this.storage.getMemoriesByEntity(memory.entityId);
-      const memoriesToUpdate = allMemories.filter(m =>
-        m.outgoingEdges.includes(params.memoryId),
-      );
-
-      // Remove this memory from their outgoingEdges
-      await Promise.all(
-        memoriesToUpdate.map(async m => {
-          const updatedEdges = m.outgoingEdges.filter(
-            id => id !== params.memoryId,
-          );
-          await this.storage.updateOutgoingEdges(m.id, updatedEdges);
-        }),
-      );
-
-      // Delete the memory
-      const deleted = await this.storage.deleteMemory(params.memoryId);
-      if (!deleted) {
-        return {
-          success: false,
-          error: 'Failed to delete memory',
-        };
-      }
+      await this.storage.setMemoryStatus(params.memoryId, 'demoted');
 
       return {
         success: true,
