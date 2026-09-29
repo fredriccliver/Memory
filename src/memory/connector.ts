@@ -575,7 +575,8 @@ Output ONLY valid JSON. No markdown code fences.`;
 
     // Single retrieval: "Existing memories" shown to the LLM are from this one getContext call.
     // todo: Future: allow the memory-manager LLM to run memory search (e.g. as a tool) multiple times before deciding operations.
-    const runScope = this.config.runWithEmbeddingScope ?? (<T>(_scope: 'search' | 'write', fn: () => T) => fn());
+    const runScope =
+      this.config.runWithEmbeddingScope ?? (<T>(_scope: 'search' | 'write', fn: () => T) => fn());
     let existingMemories: Memory[] = [];
     try {
       const memContext = await runScope('search', () => this.getContext(conversationText));
@@ -693,9 +694,13 @@ Use the conversation below to decide operations.`;
               });
             }
           } else if (op.action === 'delete') {
-            await this.deleteMemory(op.memoryId);
+            // Soft delete: the extraction LLM's "no longer needed" verdict is a
+            // demotion (ranking penalty), never a physical delete. A later
+            // re-mention bump restores the node. Physical deletion stays a
+            // host-only explicit operation (deleteMemory()).
+            await this.storage.setMemoryStatus(op.memoryId, 'demoted');
             if (this.config.verbose) {
-              console.log('[Memory] verbose delete:', { memoryId: op.memoryId });
+              console.log('[Memory] verbose delete → demoted:', { memoryId: op.memoryId });
             }
           }
         });
@@ -995,11 +1000,9 @@ Use the conversation below to decide operations.`;
     }
 
     if (traversedEdges.length > 0) {
-      this.storage
-        .recordEdgeTraversals(this.config.entityId, traversedEdges)
-        .catch(err => {
-          console.error('[Memory] Failed to record edge traversals:', err);
-        });
+      this.storage.recordEdgeTraversals(this.config.entityId, traversedEdges).catch(err => {
+        console.error('[Memory] Failed to record edge traversals:', err);
+      });
     }
 
     // Usage signal: record node retrievals on the live path (fire-and-forget)

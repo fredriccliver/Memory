@@ -1,5 +1,10 @@
 # Usage-Carved Memory
 
+> **Edition note.** The Korean edition of this document has been revised and extended
+> (principles, the three judgement points, the sleep executor, the full dial table, and the
+> boundary section). Until this English edition is brought up to date, treat
+> [usage-carved-memory.ko.md](./usage-carved-memory.ko.md) as canonical where the two differ.
+>
 > This document explains the **principles** behind v1 of this package's storage and
 > retrieval system. The intended reader is a developer who uses the package or wants
 > to understand its internals. It is a design explainer, not a code reference, and

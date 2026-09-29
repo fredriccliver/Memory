@@ -14,6 +14,9 @@ import type {
   MemoryEdgeInsert,
   SleepJobInsert,
   RetrievalShadowRecord,
+  MemoryNodeStatus,
+  SleepJob,
+  SleepQueueStats,
 } from '../../types';
 import type { PostgresStorageConfig } from '../storage-types';
 import { initDatabase, ensureTablesExist } from '../migrations/postgres-init';
@@ -430,10 +433,9 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   async getMemoriesByIds(memoryIds: string[]): Promise<Memory[]> {
     if (memoryIds.length === 0) return [];
     const schema = this.config.schema || 'memory';
-    const result = await this.client.query(
-      `SELECT * FROM ${schema}.memories WHERE id = ANY($1)`,
-      [memoryIds],
-    );
+    const result = await this.client.query(`SELECT * FROM ${schema}.memories WHERE id = ANY($1)`, [
+      memoryIds,
+    ]);
     return result.rows.map((row: any) => this.mapRowToMemory(row));
   }
 
@@ -518,15 +520,164 @@ export class PostgresAdapter implements MemoryStorageAdapter {
    */
   async bumpMemoryStrength(memoryId: string, amount: number): Promise<void> {
     const schema = this.config.schema || 'memory';
+    // A re-mention is evidence the topic returned: it also lifts a demotion.
     await this.client.query(
       `
       UPDATE ${schema}.memories
       SET strength = LEAST(1.0, strength + $2),
-          strength_updated_at = NOW()
+          strength_updated_at = NOW(),
+          status = 'active'
       WHERE id = $1
       `,
       [memoryId, amount],
     );
+  }
+
+  /**
+   * Set a memory's node status. Demotion is a ranking penalty, never a delete.
+   */
+  async setMemoryStatus(memoryId: string, status: MemoryNodeStatus): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(`UPDATE ${schema}.memories SET status = $2 WHERE id = $1`, [
+      memoryId,
+      status,
+    ]);
+  }
+
+  /**
+   * Aggregate view of an entity's sleep queue (single indexed query). Stale
+   * `processing` claims count as pending so they are never stranded.
+   */
+  async getSleepQueueStats(entityId: string, staleAfterSeconds: number): Promise<SleepQueueStats> {
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      SELECT
+        count(*) FILTER (
+          WHERE status = 'pending'
+             OR (status = 'processing' AND processed_at < NOW() - make_interval(secs => $2))
+        )::int AS pending,
+        min(created_at) FILTER (
+          WHERE status = 'pending'
+             OR (status = 'processing' AND processed_at < NOW() - make_interval(secs => $2))
+        ) AS oldest_pending_at,
+        max(processed_at) FILTER (WHERE status IN ('done', 'skipped', 'failed')) AS last_processed_at
+      FROM ${schema}.sleep_jobs
+      WHERE entity_id = $1
+      `,
+      [entityId, staleAfterSeconds],
+    );
+    const row = result.rows[0] ?? {};
+    return {
+      pending: Number(row.pending ?? 0),
+      oldestPendingAt: row.oldest_pending_at ?? null,
+      lastProcessedAt: row.last_processed_at ?? null,
+    };
+  }
+
+  /**
+   * Atomically claim jobs: pending → processing (oldest first). A `processing`
+   * row whose claim is older than `staleAfterSeconds` is reclaimable, so a
+   * crashed executor never strands a job. `processed_at` doubles as the claim
+   * time while processing and becomes the completion time on finish.
+   */
+  async claimSleepJobs(
+    entityId: string,
+    limit: number,
+    staleAfterSeconds: number,
+  ): Promise<SleepJob[]> {
+    if (limit <= 0) return [];
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      UPDATE ${schema}.sleep_jobs
+      SET status = 'processing', processed_at = NOW()
+      WHERE id IN (
+        SELECT id FROM ${schema}.sleep_jobs
+        WHERE entity_id = $1
+          AND (
+            status = 'pending'
+            OR (status = 'processing' AND processed_at < NOW() - make_interval(secs => $3))
+          )
+        ORDER BY created_at ASC
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, entity_id, kind, payload, status, verdict, created_at, processed_at
+      `,
+      [entityId, limit, staleAfterSeconds],
+    );
+    return (result.rows as Record<string, unknown>[]).map(row => this.mapRowToSleepJob(row));
+  }
+
+  /**
+   * Read-only peek at claimable jobs (dry-run preview). No lock, no writes.
+   */
+  async listClaimableSleepJobs(
+    entityId: string,
+    limit: number,
+    staleAfterSeconds: number,
+  ): Promise<SleepJob[]> {
+    if (limit <= 0) return [];
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      SELECT id, entity_id, kind, payload, status, verdict, created_at, processed_at
+      FROM ${schema}.sleep_jobs
+      WHERE entity_id = $1
+        AND (
+          status = 'pending'
+          OR (status = 'processing' AND processed_at < NOW() - make_interval(secs => $3))
+        )
+      ORDER BY created_at ASC
+      LIMIT $2
+      `,
+      [entityId, limit, staleAfterSeconds],
+    );
+    return (result.rows as Record<string, unknown>[]).map(row => this.mapRowToSleepJob(row));
+  }
+
+  /**
+   * Finish a claimed job with its verdict (terminal)
+   */
+  async completeSleepJob(
+    jobId: string,
+    status: 'done' | 'skipped' | 'failed',
+    verdict: Record<string, unknown>,
+  ): Promise<void> {
+    const schema = this.config.schema || 'memory';
+    await this.client.query(
+      `UPDATE ${schema}.sleep_jobs SET status = $2, verdict = $3, processed_at = NOW() WHERE id = $1`,
+      [jobId, status, JSON.stringify(verdict)],
+    );
+  }
+
+  /**
+   * Count jobs finished at or after `since` (global budget accounting)
+   */
+  async countSleepJobsProcessedSince(since: Date): Promise<number> {
+    const schema = this.config.schema || 'memory';
+    const result = await this.client.query(
+      `
+      SELECT count(*)::int AS n FROM ${schema}.sleep_jobs
+      WHERE status IN ('done', 'skipped', 'failed') AND processed_at >= $1
+      `,
+      [since],
+    );
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
+  private mapRowToSleepJob(row: Record<string, unknown>): SleepJob {
+    return {
+      id: row.id as string,
+      entityId: row.entity_id as string,
+      kind: row.kind as string,
+      payload: (row.payload ?? {}) as Record<string, unknown>,
+      status: row.status as SleepJob['status'],
+      verdict: (row.verdict as Record<string, unknown> | null | undefined) ?? null,
+      createdAt: row.created_at as Date,
+      processedAt: (row.processed_at as Date | null | undefined) ?? null,
+    };
   }
 
   /**
@@ -584,7 +735,8 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       // Dynamic state columns (v2+); undefined when selecting from older schemas
-      strength: row.strength !== undefined && row.strength !== null ? Number(row.strength) : undefined,
+      strength:
+        row.strength !== undefined && row.strength !== null ? Number(row.strength) : undefined,
       strengthUpdatedAt: row.strength_updated_at ?? undefined,
       retrievalCount:
         row.retrieval_count !== undefined && row.retrieval_count !== null

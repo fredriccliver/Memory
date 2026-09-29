@@ -14,6 +14,10 @@
  * - recency: exp(-daysSinceLastRetrieval / 30)
  * - nodeStrength: stored strength with lazy exponential decay (decayLambda)
  *
+ * A demoted node (status 'demoted') stays a candidate; its score is multiplied
+ * by DEMOTED_SCORE_FACTOR. Demotion is a ranking penalty, never an exclusion,
+ * so a topic that returns can still surface and lift the demotion.
+ *
  * This module is side-effect free — usage recording (node retrievals, edge
  * bumps) is the caller's responsibility so the shadow path can reuse it
  * without polluting usage signals.
@@ -25,6 +29,14 @@ import type { MemoryTuning } from '../tuning';
 
 /** Recency scale: score halves roughly every RECENCY_SCALE_DAYS days */
 const RECENCY_SCALE_DAYS = 30;
+
+/**
+ * Score multiplier for demoted nodes. Demotion is soft: the node remains a
+ * retrieval candidate at a reduced rank and returns to `active` on a re-mention.
+ *
+ * @public
+ */
+export const DEMOTED_SCORE_FACTOR = 0.5;
 
 /**
  * Result of a ranked retrieval run
@@ -105,8 +117,7 @@ export async function runRankedRetrieval(
     entityId,
     limit,
   );
-  const isActive = (m: Memory) => (m.status ?? 'active') === 'active';
-  const seeds = matches.filter(isActive);
+  const seeds = matches;
   if (seeds.length === 0) {
     return { memories: [], contributingEdgeIds: [] };
   }
@@ -122,10 +133,7 @@ export async function runRankedRetrieval(
       if (!seedSim.has(nodeId)) neighborIds.add(nodeId);
     }
   }
-  const neighbors =
-    neighborIds.size > 0
-      ? (await storage.getMemoriesByIds([...neighborIds])).filter(isActive)
-      : [];
+  const neighbors = neighborIds.size > 0 ? await storage.getMemoriesByIds([...neighborIds]) : [];
 
   // 3. Edge activation per candidate: max over incident edges of
   //    effectiveEdgeStrength × similarity of the seed on the other end
@@ -163,11 +171,13 @@ export async function runRankedRetrieval(
       memory.strengthUpdatedAt,
       tuning.decayLambda,
     );
+    const demotion = (memory.status ?? 'active') === 'demoted' ? DEMOTED_SCORE_FACTOR : 1;
     const score =
-      tuning.rankWeightSimilarity * similarity +
-      tuning.rankWeightEdge * edgeTerm +
-      tuning.rankWeightRecency * recency +
-      tuning.rankWeightStrength * nodeStrength;
+      demotion *
+      (tuning.rankWeightSimilarity * similarity +
+        tuning.rankWeightEdge * edgeTerm +
+        tuning.rankWeightRecency * recency +
+        tuning.rankWeightStrength * nodeStrength);
     return { memory: { ...memory, similarity }, score };
   });
 

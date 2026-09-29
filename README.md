@@ -10,11 +10,13 @@ Memory Infrastructure Layer - Vector/Graph based memory search and generation sy
 
 ### Key Features
 
-- **Hybrid Memory Search**: Unified memory structure combining vector embeddings and graph relationships. Each memory node contains both semantic embeddings for similarity search and graph edges for relationship traversal, enabling a two-phase search strategy: vector search for initial discovery, followed by graph traversal to find connected memories.
-- **Entity-Specific Networks**: Each entity (user, persona, workspace, agent) maintains its own unique associative memory network, enabling personalized, context-aware AI without model fine-tuning.
-- **Dynamic Memory Generation**: `DynamicMemoryGenerator` collects related memories (vector + graph) via `collectAugmentation()` for use when creating/linking memories. Used on-demand by `MemoryToolHandler` (e.g. for createMemory); not a cron or background job. Actual create/update/link are handled by `MemoryToolHandler` + `MemoryStorage`.
-- **Adapter Pattern**: Pluggable database and AI model adapters for maximum flexibility.
-- **Framework-Agnostic**: Works seamlessly with LangChain, custom implementations, and any LLM framework.
+- **Usage-carved memory**: LLM cost scales with the change (ΔN), never with the amount held (N). Candidates come from vectors and SQL; only confirmation uses an LLM, and every LLM call sees O(1) context. See the design docs below.
+- **Write-time dedup gate (no LLM)**: one nearest-neighbour lookup per new fact — near-identical mentions reinforce the existing node instead of duplicating it, ambiguous pairs are linked and deferred, new facts get cheap kNN edge hypotheses.
+- **Score-ranked retrieval**: vector top-k seeds + first-class edge expansion, ranked by `α·similarity + β·edge activation + γ·recency + δ·node strength`. No similarity threshold, so there is no starvation or flooding failure mode.
+- **Forgetting as a ranking term**: effective strength decays lazily at read time (`strength × e^(−λ·days)`). No batch job ever touches all rows; nothing is deleted, and dormant memories resurface when a topic returns.
+- **Sleep executor (stateless, no cron)**: deferred pair judgements are consumed one batch at a time, piggybacked on conversation turns or run manually with a write-free preview. All verdicts are soft (demotion, never deletion).
+- **Entity-specific networks**: each entity (user, persona, workspace, agent) keeps its own associative graph.
+- **Adapter pattern, framework-agnostic**: pluggable database and AI-model adapters; works with LangChain, custom stacks, or any LLM framework.
 
 ## Architecture
 
@@ -27,10 +29,20 @@ This package is designed to be:
 
 ### Core Principles
 
-1. **Separation of Concerns**: Memory infrastructure is completely independent from application logic
-2. **Adapter Pattern**: Database and AI model interactions are abstracted through interfaces
-3. **Graph-First Design**: Memories form a graph structure using `outgoingEdges` on each node
-4. **Hybrid Search**: Combines vector similarity search with graph traversal for comprehensive memory retrieval
+1. **Separation of Concerns**: memory infrastructure is completely independent from application logic. The application throws interaction logs; the package decides what to keep.
+2. **Adapter Pattern**: database and AI-model interactions are abstracted through interfaces.
+3. **Edges are hypotheses**: cheap to create, reinforced by use, decayed by disuse. First-class `edges` table with per-edge strength and origin (`conversation` = context-confirmed, `knn_seed` = similarity rule).
+4. **Demote, never delete**: every automatic judgement is soft and reversible, which is what makes cheap models safe to use.
+
+### Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/usage-carved-memory.ko.md](docs/usage-carved-memory.ko.md) · [en](docs/usage-carved-memory.en.md) | Principles, data model, gate, ranked retrieval, forgetting, sleep, dials, scenarios, integration contract |
+| [docs/usage-carved-memory-concepts.ko.md](docs/usage-carved-memory-concepts.ko.md) · [en](docs/usage-carved-memory-concepts.en.md) | Glossary: embeddings, cosine similarity, kNN, exponential decay, weighted sums |
+| [docs/usage-carved-memory-maintainer-guide.ko.md](docs/usage-carved-memory-maintainer-guide.ko.md) | Code map, module dependencies, schema invariants, request flows, tuning contract, boot/migration/rollback, sleep executor contract, observation queries, verification method |
+| [docs/usage-carved-memory-technical-report.ko.md](docs/usage-carved-memory-technical-report.ko.md) | Production evaluation of the gate, ranked retrieval and lazy decay over a two-month window |
+| [docs/tool-definitions-usage.md](docs/tool-definitions-usage.md) | Tool-calling integration (`memoryToolDefinitions`, `MemoryToolHandler`) |
 
 ## Installation
 
@@ -194,10 +206,16 @@ packages/memory/
 │   │   ├── embedding-service.ts    # Embedding generation service
 │   │   └── openai-adapter.ts       # OpenAI embedding adapter
 │   ├── memory/               # Memory management components
-│   │   ├── storage.ts        # MemoryStorage implementation
-│   │   ├── generator.ts      # DynamicMemoryGenerator
-│   │   ├── connector.ts      # MemoryConnector for LangChain
-│   │   └── tool-handler.ts   # MemoryToolHandler
+│   │   ├── storage.ts            # MemoryStorage facade (embedding + adapter passthrough)
+│   │   ├── connector.ts          # MemoryConnector: conversation entrance (extraction, gate, dual-write)
+│   │   ├── ranked-retrieval.ts   # Score-ranked retrieval with lazy decay (side-effect free)
+│   │   ├── sleep.ts              # Sleep executor (queue consumer, stateless, dry-run)
+│   │   ├── bulk-plan.ts          # Bulk load planning (compute only)
+│   │   ├── tool-handler.ts       # MemoryToolHandler
+│   │   ├── generator.ts          # DynamicMemoryGenerator
+│   │   ├── consolidator.ts       # Legacy full-scan pass (kept for compatibility)
+│   │   └── optimizer.ts          # Legacy full-scan pass (kept for compatibility)
+│   ├── tuning.ts             # MemoryTuning contract, defaults, validation
 │   └── tools/                # AI tool definitions
 │       ├── definitions.ts    # Memory management tool definitions
 │       └── system-prompt-guide.ts
@@ -215,30 +233,13 @@ packages/memory/
 └── README.md
 ```
 
-### Current Status
+### Scope
 
-**Implemented**:
-
-- ✅ Type definitions (`Memory`, `AugmentationData`, `ValidationResult`, `ConversationContext`)
-- ✅ Database adapter interface (`MemoryStorageAdapter`)
-- ✅ AI model adapter interface (`AIModelAdapter`)
-- ✅ PostgreSQL storage adapter with pgvector support
-- ✅ Embedding service with OpenAI adapter
-- ✅ Memory storage implementation (create, read, update, delete, search)
-- ✅ Vector similarity search on memory nodes
-- ✅ Graph traversal algorithms (BFS, recursive CTE)
-- ✅ DynamicMemoryGenerator (collectAugmentation for augmentation context; on-demand, not cron)
-- ✅ Memory connector for LangChain integration
-- ✅ Comprehensive tool handler with memory management tools
-- ✅ Tool definitions for AI-driven memory operations
-
-**Future Enhancements**:
-
-- 🔄 Conflict detection and resolution
-- 🔄 Agentic edge construction from natural language
-- 🔄 Enhanced dynamic relationship inference
-- 🔄 Temporal reasoning capabilities
-- 🔄 Multi-modal memory support
+The package owns storage, the write-time gate, ranked retrieval with lazy decay, the sleep
+executor, and bulk-load planning. Extensions that follow the same principles but are not
+part of the package today: LLM pair review inside sleep (polarity and temporal updates),
+community summaries, an archive tier for "fully forgotten", and a lifetime axis for
+transient state. See the boundary section of the design document.
 
 ## Development
 

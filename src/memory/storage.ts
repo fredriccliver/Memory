@@ -16,6 +16,9 @@ import type {
   MemoryEdgeInsert,
   SleepJobInsert,
   RetrievalShadowRecord,
+  MemoryNodeStatus,
+  SleepJob,
+  SleepQueueStats,
 } from '../types';
 import type { EmbeddingService } from '../vector/embedding-service';
 
@@ -503,5 +506,97 @@ export class MemoryStorage {
    */
   async recordRetrievalShadow(record: RetrievalShadowRecord): Promise<void> {
     return this.adapter.recordRetrievalShadow(record);
+  }
+
+  /**
+   * Set a memory's node status. Demotion is a ranking penalty (the node stays a
+   * retrieval candidate); a re-mention bump restores `active`.
+   *
+   * @param memoryId - Memory UUID
+   * @param status - 'active' | 'demoted'
+   *
+   * @public
+   */
+  async setMemoryStatus(memoryId: string, status: MemoryNodeStatus): Promise<void> {
+    return this.adapter.setMemoryStatus(memoryId, status);
+  }
+
+  /**
+   * Aggregate view of an entity's sleep queue — the executor's wake-up input.
+   *
+   * @param entityId - Entity id
+   * @param staleAfterSeconds - Reclaim threshold: older `processing` claims count as pending
+   * @returns Pending count, oldest pending time, last completion time
+   *
+   * @public
+   */
+  async getSleepQueueStats(entityId: string, staleAfterSeconds: number): Promise<SleepQueueStats> {
+    return this.adapter.getSleepQueueStats(entityId, staleAfterSeconds);
+  }
+
+  /**
+   * Atomically claim up to `limit` sleep jobs of an entity (oldest first).
+   * Stale `processing` claims older than `staleAfterSeconds` are reclaimable.
+   *
+   * @param entityId - Entity id
+   * @param limit - Max jobs to claim
+   * @param staleAfterSeconds - Reclaim threshold for stale claims
+   * @returns Claimed jobs
+   *
+   * @public
+   */
+  async claimSleepJobs(
+    entityId: string,
+    limit: number,
+    staleAfterSeconds: number,
+  ): Promise<SleepJob[]> {
+    return this.adapter.claimSleepJobs(entityId, limit, staleAfterSeconds);
+  }
+
+  /**
+   * Read-only peek at the jobs a claim would take (dry-run preview). No writes.
+   *
+   * @param entityId - Entity id
+   * @param limit - Max jobs
+   * @param staleAfterSeconds - Reclaim threshold for stale claims
+   * @returns Claimable jobs, oldest first
+   *
+   * @public
+   */
+  async listClaimableSleepJobs(
+    entityId: string,
+    limit: number,
+    staleAfterSeconds: number,
+  ): Promise<SleepJob[]> {
+    return this.adapter.listClaimableSleepJobs(entityId, limit, staleAfterSeconds);
+  }
+
+  /**
+   * Finish a claimed sleep job with its verdict (terminal; never re-enqueued).
+   *
+   * @param jobId - Job UUID
+   * @param status - 'done' | 'skipped' | 'failed'
+   * @param verdict - Kind-specific verdict record (audit)
+   *
+   * @public
+   */
+  async completeSleepJob(
+    jobId: string,
+    status: 'done' | 'skipped' | 'failed',
+    verdict: Record<string, unknown>,
+  ): Promise<void> {
+    return this.adapter.completeSleepJob(jobId, status, verdict);
+  }
+
+  /**
+   * Count sleep jobs finished at or after `since` (global daily budget).
+   *
+   * @param since - Lower bound on completion time
+   * @returns Finished job count
+   *
+   * @public
+   */
+  async countSleepJobsProcessedSince(since: Date): Promise<number> {
+    return this.adapter.countSleepJobsProcessedSince(since);
   }
 }
