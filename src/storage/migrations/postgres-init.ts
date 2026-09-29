@@ -417,8 +417,10 @@ async function ensureTablesExistInner(client: any, schema: string): Promise<void
     ON ${schema}.edges(to_id)
   `);
 
-  // Sleep worker job queue. Verdict columns live on the job row so the queue
-  // doubles as the audit log (no separate audit table).
+  // Sleep job queue. Verdict columns live on the job row so the queue doubles
+  // as the audit log (no separate audit table). status: 'pending' |
+  // 'processing' (claimed; processed_at = claim time) | 'done' | 'skipped' |
+  // 'failed'.
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${schema}.sleep_jobs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

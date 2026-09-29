@@ -11,7 +11,10 @@ import type {
   GateDecisionRecord,
   MemoryEdge,
   MemoryEdgeInsert,
+  MemoryNodeStatus,
+  SleepJob,
   SleepJobInsert,
+  SleepQueueStats,
   RetrievalShadowRecord,
 } from '../types';
 
@@ -149,10 +152,7 @@ export interface MemoryStorageAdapter {
    * @param entityId - Entity ID the edges belong to
    * @param edges - Array of traversed edges (from → to)
    */
-  recordEdgeTraversals(
-    entityId: string,
-    edges: Array<{ from: string; to: string }>,
-  ): Promise<void>;
+  recordEdgeTraversals(entityId: string, edges: Array<{ from: string; to: string }>): Promise<void>;
 
   /**
    * Get edge traversal statistics for an entity
@@ -263,4 +263,70 @@ export interface MemoryStorageAdapter {
    * @param record - Shadow comparison record
    */
   recordRetrievalShadow(record: RetrievalShadowRecord): Promise<void>;
+
+  /**
+   * Set a memory's node status (demotion is a ranking penalty, never a delete)
+   *
+   * @param memoryId - Memory UUID
+   * @param status - New status
+   */
+  setMemoryStatus(memoryId: string, status: MemoryNodeStatus): Promise<void>;
+
+  /**
+   * Aggregate view of an entity's sleep queue (one indexed query). A
+   * `processing` row whose claim is older than `staleAfterSeconds` counts as
+   * pending so a crashed executor's jobs still wake the next run.
+   *
+   * @param entityId - Entity id
+   * @param staleAfterSeconds - Age after which a `processing` claim is reclaimable
+   * @returns Pending (incl. reclaimable) count, oldest pending time, last completion time
+   */
+  getSleepQueueStats(entityId: string, staleAfterSeconds: number): Promise<SleepQueueStats>;
+
+  /**
+   * Atomically claim up to `limit` jobs of an entity (pending, or processing
+   * with a claim older than `staleAfterSeconds`) — oldest first
+   *
+   * @param entityId - Entity id
+   * @param limit - Max jobs to claim
+   * @param staleAfterSeconds - Age after which a `processing` claim is reclaimable
+   * @returns Claimed jobs (status already `processing`)
+   */
+  claimSleepJobs(entityId: string, limit: number, staleAfterSeconds: number): Promise<SleepJob[]>;
+
+  /**
+   * Read-only view of the jobs a claim would take (same selection, no lock,
+   * no status change) — used for dry-run previews
+   *
+   * @param entityId - Entity id
+   * @param limit - Max jobs
+   * @param staleAfterSeconds - Age after which a `processing` claim is reclaimable
+   * @returns Claimable jobs, oldest first
+   */
+  listClaimableSleepJobs(
+    entityId: string,
+    limit: number,
+    staleAfterSeconds: number,
+  ): Promise<SleepJob[]>;
+
+  /**
+   * Finish a claimed job with its verdict (terminal; never re-enqueued)
+   *
+   * @param jobId - Job UUID
+   * @param status - Terminal status
+   * @param verdict - Kind-specific verdict record
+   */
+  completeSleepJob(
+    jobId: string,
+    status: 'done' | 'skipped' | 'failed',
+    verdict: Record<string, unknown>,
+  ): Promise<void>;
+
+  /**
+   * Count jobs finished since a point in time (global budget accounting)
+   *
+   * @param since - Lower bound (inclusive) on completion time
+   * @returns Number of jobs in a terminal status completed at or after `since`
+   */
+  countSleepJobsProcessedSince(since: Date): Promise<number>;
 }

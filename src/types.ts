@@ -257,6 +257,66 @@ export interface SleepJobInsert {
 }
 
 /**
+ * Node status.
+ *
+ * - `active`: normal
+ * - `demoted`: ranking penalty (still a retrieval candidate). Set by sleep
+ *   merge verdicts and by soft "delete" operations; cleared by a re-mention bump.
+ *
+ * @public
+ */
+export type MemoryNodeStatus = 'active' | 'demoted';
+
+/**
+ * Sleep job lifecycle.
+ *
+ * `pending` → `processing` (claimed by an executor) → `done` | `skipped` | `failed`.
+ * A `processing` row whose claim is stale is reclaimable.
+ *
+ * @public
+ */
+export type SleepJobStatus = 'pending' | 'processing' | 'done' | 'skipped' | 'failed';
+
+/**
+ * A sleep queue row. The verdict lives on the row so the queue doubles as the
+ * audit log.
+ *
+ * @public
+ */
+export interface SleepJob {
+  /** Job UUID */
+  id: string;
+  /** Entity the job belongs to */
+  entityId: string;
+  /** Job kind: 'merge_review' | extensible */
+  kind: string;
+  /** Job payload (kind-specific) */
+  payload: Record<string, unknown>;
+  /** Lifecycle status */
+  status: SleepJobStatus;
+  /** Verdict recorded on completion (kind-specific) */
+  verdict?: Record<string, unknown> | null;
+  /** Enqueue time */
+  createdAt: Date;
+  /** Claim time while processing; completion time afterwards */
+  processedAt?: Date | null;
+}
+
+/**
+ * Aggregate view of one entity's sleep queue, used for wake-up decisions.
+ *
+ * @public
+ */
+export interface SleepQueueStats {
+  /** Pending job count */
+  pending: number;
+  /** Enqueue time of the oldest pending job (null when none) */
+  oldestPendingAt: Date | null;
+  /** Completion time of the most recently finished job (null when none) */
+  lastProcessedAt: Date | null;
+}
+
+/**
  * Outcome of a dedup gate decision
  *
  * - `created`: memory was created (no near-duplicate above threshold)
