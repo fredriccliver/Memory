@@ -18,6 +18,10 @@
  * exactly like gate seeds. Origin has two values (rule vs. context) and the
  * executor adds none.
  *
+ * Judgements within one run are order-independent of persistence: a node demoted
+ * by an earlier job in the same batch is treated as demoted by later jobs whether
+ * or not the write happened (dry run), so a preview always equals the apply.
+ *
  * Caps (per design): once per pair (verdict is terminal), batch size, entity
  * cooldown, and a global daily budget — all derived from the queue table.
  */
@@ -44,7 +48,7 @@ export interface SleepConfig {
   entityCooldownMinutes: number;
   /** Max jobs finished in the trailing 24 hours across all entities. Default 200 */
   dailyBudget: number;
-  /** Pairs at/above this similarity merge by rule; below → coexist. Default 0.93 */
+  /** Pairs at/above this similarity merge by rule; below → coexist. Default 0.95 */
   mergeSimilarityBand: number;
   /** A `processing` claim older than this (minutes) is reclaimable. Default 10 */
   staleClaimMinutes: number;
@@ -62,7 +66,7 @@ export const DEFAULT_SLEEP_CONFIG: Readonly<SleepConfig> = Object.freeze({
   batchSize: 10,
   entityCooldownMinutes: 360,
   dailyBudget: 200,
-  mergeSimilarityBand: 0.93,
+  mergeSimilarityBand: 0.95,
   staleClaimMinutes: 10,
 });
 
@@ -185,16 +189,22 @@ const snippet = (content: string): string =>
   content.length > 160 ? `${content.slice(0, 160)}…` : content;
 
 /**
- * Picks the representative of a near-duplicate pair: active beats demoted,
- * then more retrievals (usage evidence), then the longer content (no
- * information is lost by demoting the shorter restatement), then the older
- * node (the matched, pre-existing one).
+ * Picks the representative of a near-duplicate pair: active beats demoted
+ * (including nodes demoted earlier in this run), then the longer content (no
+ * information is lost by demoting the shorter restatement), then more
+ * retrievals (usage evidence), then the older node (the matched, pre-existing
+ * one). Content length ranks above usage because the executor's first duty is
+ * to preserve information.
  */
-function pickRepresentative(a: Memory, b: Memory): { keep: Memory; demote: Memory } {
+function pickRepresentative(
+  a: Memory,
+  b: Memory,
+  demotedInRun: ReadonlySet<string>,
+): { keep: Memory; demote: Memory } {
   const rank = (m: Memory): [number, number, number, number] => [
-    (m.status ?? 'active') === 'active' ? 1 : 0,
-    m.retrievalCount ?? 0,
+    (m.status ?? 'active') === 'active' && !demotedInRun.has(m.id) ? 1 : 0,
     m.content.length,
+    m.retrievalCount ?? 0,
     -new Date(m.createdAt).getTime(),
   ];
   const ra = rank(a);
@@ -294,9 +304,10 @@ export async function runSleep(
     verdicts: [],
   };
 
+  const demotedInRun = new Set<string>();
   for (const job of jobs) {
     try {
-      const outcome = await judgeJob(storage, job, cfg, { apply: !dryRun });
+      const outcome = await judgeJob(storage, job, cfg, { apply: !dryRun, demotedInRun });
       if (!dryRun) await storage.completeSleepJob(job.id, outcome.status, outcome.verdict);
       if (outcome.status === 'skipped') result.skipped++;
       else if (outcome.verdict.kind === 'merge') result.merged++;
@@ -350,13 +361,15 @@ interface JobOutcome {
 /**
  * Rule-based judgement for one job. Only `merge_review` is known; other kinds
  * are skipped with a terminal verdict so they are never re-claimed. With
- * `apply: false` the verdict is computed but nothing is written.
+ * `apply: false` the verdict is computed but nothing is written. Nodes demoted
+ * by earlier jobs of the same run are tracked in `demotedInRun` so chained
+ * pairs judge identically in dry run and apply.
  */
 async function judgeJob(
   storage: MemoryStorage,
   job: SleepJob,
   cfg: SleepConfig,
-  options: { apply: boolean },
+  options: { apply: boolean; demotedInRun: Set<string> },
 ): Promise<JobOutcome> {
   if (job.kind !== 'merge_review') {
     return {
@@ -391,9 +404,10 @@ async function judgeJob(
     };
   }
 
-  const { keep, demote } = pickRepresentative(a, b);
+  const { keep, demote } = pickRepresentative(a, b, options.demotedInRun);
   if (options.apply) {
-    await storage.setMemoryStatus(demote.id, 'demoted');
+    // Edge first, demotion second: if the second write fails, what remains is a
+    // harmless hypothesis edge rather than a demotion without its record.
     await storage.insertEdges([
       {
         entityId: job.entityId,
@@ -405,7 +419,9 @@ async function judgeJob(
         strength: similarity,
       },
     ]);
+    await storage.setMemoryStatus(demote.id, 'demoted');
   }
+  options.demotedInRun.add(demote.id);
   return {
     status: 'done',
     verdict: {
