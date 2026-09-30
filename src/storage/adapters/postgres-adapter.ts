@@ -474,7 +474,13 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   }
 
   /**
-   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   * Reinforce edges by usage — diminishing bump.
+   *
+   * Each use closes a fixed fraction (`amount`) of the remaining headroom:
+   * strength += amount × (1 − strength). Strength approaches 1.0 asymptotically
+   * and never saturates, so the stored value keeps discriminating heavily used
+   * edges from moderately used ones without any timing or counter state. The
+   * decay clock is reset on every bump as before.
    */
   async bumpEdgeStrengths(edgeIds: string[], amount: number): Promise<void> {
     if (edgeIds.length === 0) return;
@@ -482,7 +488,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     await this.client.query(
       `
       UPDATE ${schema}.edges
-      SET strength = LEAST(1.0, strength + $2),
+      SET strength = LEAST(1.0, strength + $2 * (1.0 - strength)),
           strength_updated_at = NOW()
       WHERE id = ANY($1)
       `,

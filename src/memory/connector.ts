@@ -115,6 +115,7 @@ const GRAY_ZONE_EDGE_STRENGTH = 0.8;
 /** Initial strength of conversation-origin edges (LLM-decided links) */
 export const CONVERSATION_EDGE_STRENGTH = 0.7;
 /** Edge strength added when an edge contributes to a served ranked retrieval */
+/** Usage bump per contributing retrieval: fraction of the remaining headroom (diminishing) */
 const EDGE_USAGE_BUMP = 0.05;
 
 /**
