@@ -342,10 +342,13 @@ verdict **첫 100건을 전건 내용 대조**해 통과하면 피기백을 켠�
 1. **사망 쌍**: 한쪽이라도 노드가 없으면 `skipped`로 마감. 호스트가 노드를 지울 때 큐를
    함께 정리하지 않아도 실행기가 견딘다.
    payload가 깨졌거나 kind를 모르는 잡도 `skipped`로 종결해 재claim되지 않게 한다.
-2. **병합 밴드 이상**: 대표를 고른다(active > 인출 횟수 많음 > 내용이 긴 쪽 > 먼저 태어난
-   쪽). 나머지를 강등(`status = 'demoted'`)하고 대표 → 강등 노드 방향의 `supersedes` 엣지를
-   남긴다. 유사도 규칙의 산물이므로 origin은 `knn_seed`, 강도는 그 유사도다(게이트 시드와
-   같은 규칙). `done` + verdict `{ kind: 'merge', keep, demote, similarity }`.
+2. **병합 밴드 이상**: 대표를 고른다(active > **내용이 긴 쪽** > 인출 횟수 많음 > 먼저 태어난
+   쪽 — 정보 보존이 사용 증거보다 앞선다). 나머지를 강등(`status = 'demoted'`)하고 대표 → 강등
+   노드 방향의 `supersedes` 엣지를 남긴다. 쓰기 순서는 **엣지 먼저, 강등 나중**(중간 실패 시
+   무해한 가설 엣지만 남는다). 유사도 규칙의 산물이므로 origin은 `knn_seed`, 강도는 그
+   유사도다(게이트 시드와 같은 규칙). `done` + verdict `{ kind: 'merge', keep, demote, similarity }`.
+   같은 실행에서 앞 잡이 강등한 노드는 뒤 잡에서도 강등된 것으로 취급한다(실행 내 강등 집합).
+   그래서 사슬로 얽힌 쌍도 미리보기와 적용이 같은 판정을 낸다.
 3. **그 미만 회색지대**: 공존. 회색 엣지는 그대로 두고 `done` + verdict `{ kind: 'coexist' }`.
 4. **claim**: `pending → processing` 원자 UPDATE(`FOR UPDATE SKIP LOCKED`), `processed_at`이 claim
    시각을 겸한다. 스테일 claim(기본 10분)은 재claim 가능해 실행기가 죽어도 잡이 좌초하지 않는다.
