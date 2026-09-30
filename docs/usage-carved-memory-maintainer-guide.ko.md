@@ -139,8 +139,9 @@ status 전이는 `pending → processing → done | skipped | failed`. verdict�
 |---|---|
 | edges에 dangling 없음 (FK) | `insertEdges`의 멀티 VALUES는 FK 위반 1건에 배치 전체가 실패한다. 호스트가 만드는 엣지는 양 끝 존재를 먼저 걸러야 한다 |
 | 자기참조 엣지 없음 | 이관·복제 경로가 필터 |
-| `strength ∈ (0, 1]` | bump는 `LEAST(1.0, …)`로 클램프 |
+| `strength ∈ (0, 1]` | 노드 bump는 `LEAST(1.0, …)`로 클램프. 엣지 bump는 점감이라 1.0을 넘을 수 없고 클램프는 안전장치로만 남는다 |
 | **저장 강도를 낮추는 쓰기가 없다** | `insertEdges`의 ON CONFLICT는 `GREATEST`로 상향만. 대화 재확인이 시드 가설을 승격하되 하향은 없다. 강등은 status로만 표현한다 |
+| 엣지 사용 bump는 점감 | `strength += 0.05 × (1 − strength)`. 1.0에 점근. 노드 재언급 bump는 +0.1 고정, 상한 1.0 |
 | 시스템 판단으로 노드를 물리 삭제하지 않는다 | 추출 LLM·도구 호출의 delete는 강등. 물리 삭제는 호스트의 명시 API뿐 |
 | 전환기: 대화 유래 링크는 배열 ⊆ edges | 이중기록(2-3). 시드·회색 엣지는 edges에만 있어도 된다 |
 | 스킵 노드 강도 = 0.5 + 0.1 × 스킵 횟수 | 관측 시 산수 대조 |
@@ -173,7 +174,7 @@ ToolHandler)는 배열과 edges에 **동시에** 기록되고 이것은 인출 �
 - `shadow`: legacy를 서빙하고, `runRankedRetrieval`을 부수효과 없이 병행 실행해 diff를
   `retrieval_shadow_log`에 기록(fire-and-forget).
 - `ranked`: `runRankedRetrieval` 서빙. 부수효과 두 개를 fire-and-forget으로 —
-  `recordNodeRetrievals`(반환된 노드의 인출 횟수·시각), `bumpEdgeStrengths`(기여 엣지 +0.05).
+  `recordNodeRetrievals`(반환된 노드의 인출 횟수·시각), `bumpEdgeStrengths`(기여 엣지, 남은 여유의 5% 점감).
 
 `runRankedRetrieval` 내부: 벡터 top-k 시드(k = limit, threshold 없음) → `getEdgesTouching`
 으로 1-hop 이웃(무방향) → 노드별 최강 엣지 활성(유효 엣지강도 × 시드 유사도의 max) →
@@ -216,7 +217,7 @@ plan과 commit을 나눈 이유는 적재 전에 통계와 엣지 목록을 사�
 | 부수효과 | 어느 경로 | 어느 모드 | 동기/비동기 |
 |---|---|---|---|
 | 노드 인출 기록 | getContext | ranked, legacy(수집 목적) | 비동기 |
-| 기여 엣지 bump +0.05 | getContext | ranked만 | 비동기 |
+| 기여 엣지 점감 bump (남은 여유의 5%) | getContext | ranked만 | 비동기 |
 | shadow diff 기록 | getContext | shadow만 | 비동기 |
 | 노드 재언급 bump +0.1 | afterResponse | gate active | 동기 |
 | kNN 시드 / 회색 엣지 / 큐 적재 | afterResponse | gate active | 동기 (실패해도 생성은 유지) |
@@ -379,7 +380,7 @@ LLM 쌍 심사(재표현/모순/양립/무관)는 규칙형 위에 붙는 확장
 |---|---|---|
 | 게이트 생성/스킵 | `gate_decisions` decision별 | 신규 스킵은 매회 전건 내용 대조. 오탐 발생 시 즉시 보고 |
 | 노드 bump 분포 | `round(strength,2)`별 노드 수 | 0.5 + 0.1×n 산수 |
-| 엣지 bump / 포화 | `strength_updated_at > created_at + 1min` / `strength >= 0.999` | 포화 비중 30%+ 지속 시 bump 쿨다운·점감형 검토 |
+| 엣지 bump / 상위 밴드 | `strength_updated_at > created_at + 1min` / 저장 강도 밴드(≥0.95, ≥0.99) 비중 | bump는 점감(남은 여유의 5%)이라 1.0에 닿지 않는다. 한 세션의 턴 수가 강도에 과도하게 반영되는 게 보이면 bump 쿨다운 검토 |
 | 시드 성숙 적중률 | `knn_seed` 중 생성 24h+ 경과분의 bump 비율 | 시드 하한·K 조정 근거 |
 | λ 유효 지형 | 저장 밴드별 유효 강도 백분위 | λ 조정 근거 |
 | 재사용 간격 | bump·인출 시각 − 생성 시각의 분포 | λ 반감기 하한 |

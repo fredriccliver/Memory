@@ -250,10 +250,12 @@ export interface MemoryStorageAdapter {
   recordNodeRetrievals(memoryIds: string[]): Promise<void>;
 
   /**
-   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   * Reinforce edges by usage with a diminishing bump:
+   * strength += amount × (1 − strength). Approaches 1.0, never saturates.
+   * Resets the decay clock.
    *
    * @param edgeIds - Edge UUIDs to bump
-   * @param amount - Amount to add (0-1)
+   * @param amount - Fraction of the remaining headroom to close (0-1)
    */
   bumpEdgeStrengths(edgeIds: string[], amount: number): Promise<void>;
 

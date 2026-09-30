@@ -486,10 +486,11 @@ export class MemoryStorage {
   }
 
   /**
-   * Increase edge strengths (clamped to 1.0) — traversal usage signal
+   * Reinforce edges by usage — diminishing bump (strength += amount × (1 − strength)).
+   * Strength approaches 1.0 asymptotically; the decay clock is reset.
    *
    * @param edgeIds - Edge UUIDs to bump
-   * @param amount - Amount to add (0-1)
+   * @param amount - Fraction of the remaining headroom to close (0-1)
    *
    * @public
    */
