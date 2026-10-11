@@ -27,20 +27,12 @@ export { MemoryConnector } from './memory/connector';
 export type {
   MemoryConnectorConfig,
   MemoryContext,
+  ApplyOperationOutcome,
+  ApplyOperationsResult,
   CreateMemoryOptions as ConnectorCreateMemoryOptions,
   ContextChangeCallback,
   ChattingManager,
 } from './memory/connector';
-export { DynamicMemoryGenerator } from './memory/generator';
-export type { CollectAugmentationOptions } from './memory/generator';
-export { MemoryToolHandler } from './memory/tool-handler';
-export type {
-  CreateMemoryParams,
-  UpdateMemoryParams,
-  UpdateMemoryLinkParams,
-  DeleteMemoryParams,
-  ToolHandlerResult,
-} from './memory/tool-handler';
 export {
   runRankedRetrieval,
   effectiveStrength,
@@ -55,7 +47,26 @@ export type {
   SleepRunResult,
   SleepJobVerdict,
 } from './memory/sleep';
+export {
+  buildWorkingSet,
+  buildMemoryWriteInstructions,
+  writeInstructionParts,
+  DEFAULT_MEMORY_OPS_BLOCK_TAG,
+  DEFAULT_MAX_OPERATIONS,
+  parseMemoryOperations,
+  stripMemoryOpsBlock,
+} from './memory/write-contract';
+export type {
+  WorkingSet,
+  WorkingSetEntry,
+  WriteInstructionOptions,
+  WriteInstructionParts,
+  ParseDropReason,
+  ParseMemoryOperationsResult,
+} from './memory/write-contract';
 export { planBulkCreate } from './memory/bulk-plan';
+export { commitBulkPlan, MAX_PLANNED_NODES_PER_COMMIT } from './memory/bulk-commit';
+export type { CommitBulkPlanOptions, CommitBulkPlanResult } from './memory/bulk-commit';
 export type {
   BulkPlan,
   BulkPlanItem,
@@ -64,12 +75,8 @@ export type {
   BulkPlanEdge,
   BulkPlanStats,
 } from './memory/bulk-plan';
-export { MemoryConsolidator, consolidateMemories } from './memory/consolidator';
-export type {
-  ConsolidateMemoriesOptions,
-  ConsolidateMemoriesResult,
-  ConsolidationProgress,
-} from './memory/consolidator';
+
+// Legacy Optimizer — kept only for the host's "Reflection" feature; removed with v1 cleanup
 export {
   MemoryOptimizer,
   optimizeMemories,
@@ -92,6 +99,3 @@ export * from './vector/openai-adapter';
 // Graph components will be exported here as they are implemented
 // export * from './graph/relationship-engine';
 // export * from './graph/traversal';
-
-// Tools
-export * from './tools';

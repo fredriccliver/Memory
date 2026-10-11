@@ -12,7 +12,6 @@ import type { MemoryStorage } from './storage';
 import type {
   ConversationContext,
   MemoryOperation,
-  AfterResponseContextAdapter,
   GateDecisionRecord,
 } from '../types';
 import { normalizeMemoryTuning, type MemoryTuning } from '../tuning';
@@ -34,7 +33,7 @@ export interface MemoryConnectorConfig {
   contentLocale?: 'ko' | 'en';
   /** Maximum depth for graph traversal (default: 10) */
   chainDepth?: number;
-  /** Operation mode: read-only or read-write (default: 'read-write'). read-write includes handleAfterResponse (auto memory generation on response). */
+  /** Operation mode: read-only or read-write (default: 'read-write'). Writes go through `applyOperations` / `createMemory` etc. */
   mode?: 'read-only' | 'read-write';
   /** Maximum number of memories to retrieve (default: 50) */
   maxMemoryCount?: number;
@@ -42,8 +41,6 @@ export interface MemoryConnectorConfig {
   similarityThreshold?: SearchMode;
   /** Whether to enable decision logging via logMemoryDecision tool (default: false) */
   enableDecisionLogging?: boolean;
-  /** Optional LLM adapter for obtaining create/update/updateLink/delete from context. When set, connector owns context slicing, prompt, parse, and execution. */
-  contextAdapter?: AfterResponseContextAdapter;
   /** When true, log after-response flow and operation counts (default: false). Can be set at init or per-connector. */
   verbose?: boolean;
   /**
@@ -56,6 +53,27 @@ export interface MemoryConnectorConfig {
   ) => T | Promise<T>;
   /** Runtime tuning values (dedup gate mode, thresholds). Invalid fields fall back to defaults. */
   tuning?: Partial<MemoryTuning>;
+}
+
+/** Outcome of one operation inside {@link MemoryConnector.applyOperations}. */
+export interface ApplyOperationOutcome {
+  action: MemoryOperation['action'];
+  ok: boolean;
+  /** Created / updated / linked-from / demoted memory id when known. */
+  memoryId?: string;
+  /** create only: the dedup gate treated it as a duplicate (existing node bumped instead). */
+  skippedByGate?: boolean;
+  error?: string;
+}
+
+/** Summary returned by {@link MemoryConnector.applyOperations}. */
+export interface ApplyOperationsResult {
+  /** Operations that finished without throwing — gate-skipped creates included (see `skippedByGate`). */
+  applied: number;
+  failed: number;
+  createdIds: string[];
+  skippedByGate: number;
+  outcomes: ApplyOperationOutcome[];
 }
 
 /**
@@ -148,10 +166,6 @@ export interface ChattingManager {
    */
   prepareContext?(conversationContext: string): Promise<MemoryContext>;
 
-  /**
-   * Called after receiving a response to handle memory creation
-   */
-  onAfterResponse?(context: ConversationContext): Promise<void>;
 }
 
 /**
@@ -224,9 +238,6 @@ function createLangChainAdapter(chain: unknown, connector: MemoryConnector): Cha
       return connector.getContext(conversationContext);
     },
 
-    async onAfterResponse(context: ConversationContext): Promise<void> {
-      await connector.handleAfterResponse(context);
-    },
   };
 }
 
@@ -267,6 +278,18 @@ export class MemoryConnector {
       ...config,
     };
     this.tuning = normalizeMemoryTuning(config.tuning);
+  }
+
+  /**
+   * Storage this connector writes through. Hosts use it for LLM-free lookups
+   * (e.g. a write-oriented vector search) that must not bump usage.
+   *
+   * @returns The connector's memory storage
+   *
+   * @public
+   */
+  getStorage(): MemoryStorage {
+    return this.storage;
   }
 
   /**
@@ -396,242 +419,44 @@ export class MemoryConnector {
     return this.getContext(conversationContext);
   }
 
+
   /**
-   * Handles response from chatting manager
+   * Applies memory operations decided by the host (or by the package's own
+   * extraction path) using the rule engine only: dedup gate, kNN seeding,
+   * conversation-edge dual write, demotion. No model call happens here.
    *
-   * When contextAdapter is set: connector owns context slicing, prompt, parse, and execution
-   * (application passes context as-is). When not set: calls chattingManager.onAfterResponse if present.
+   * Each operation is isolated: a failure is recorded in `outcomes` and the
+   * rest proceed. Operation ids are trusted as given — hosts should resolve
+   * aliases through {@link parseMemoryOperations} first.
    *
-   * @param context - Conversation context (application passes as-is; connector decides how much to use)
+   * @param operations - UUID-addressed operations
+   * @param options - `source`: log tag (default `host`)
+   * @returns Counts and per-operation outcomes
+   * @throws Error when the connector is in read-only mode
    *
    * @public
    */
-  async handleAfterResponse(context: ConversationContext): Promise<void> {
-    // Unconditional entry log (package must be rebuilt for changes: pnpm --filter @openaikits/memory build)
-    console.log(
-      '[Memory] handleAfterResponse: entered',
-      'isConnected:',
-      this.isConnected,
-      'mode:',
-      this.config.mode,
-    );
-
-    if (!this.isConnected || this.config.mode === 'read-only') {
-      console.log(
-        '[Memory] handleAfterResponse: skipped (connected:',
-        this.isConnected,
-        'mode:',
-        this.config.mode,
-        ')',
-      );
-      return;
+  async applyOperations(
+    operations: MemoryOperation[],
+    options: { source?: string } = {},
+  ): Promise<ApplyOperationsResult> {
+    if (this.config.mode === 'read-only') {
+      throw new Error('Cannot apply memory operations in read-only mode');
     }
-
-    const contextAdapter = this.config.contextAdapter;
-    console.log(
-      '[Memory] handleAfterResponse:',
-      contextAdapter ? 'contextAdapter' : 'onAfterResponse',
-      'messages:',
-      context.messages?.length ?? 0,
-    );
-    if (contextAdapter) {
-      await this.runAfterResponseWithContext(context, contextAdapter);
-      return;
-    }
-
-    if (this.chattingManager?.onAfterResponse) {
-      await this.chattingManager.onAfterResponse(context);
-    }
-  }
-
-  /**
-   * Builds the system prompt for after-response memory decisions.
-   * When entityName/partnerName are provided, injects ownership attribution rules
-   * so the LLM clearly distinguishes "self (entity)" facts from "partner" facts.
-   */
-  private buildAfterResponseSystemPrompt(): string {
-    const { entityName, partnerName, contentLocale = 'ko' } = this.config;
-    const contentLanguageRule =
-      contentLocale === 'en'
-        ? '- Write all new/updated memory **content** in **English**.'
-        : '- 모든 memory **content**는 **한국어** 평서문으로 작성.';
-
-    const ownershipBlock =
-      entityName || partnerName
-        ? `
-**Memory ownership — CRITICAL:**
-This entity is "${entityName || 'the assistant'}" (the assistant in the conversation).
-The conversation partner is "${partnerName || 'the user'}" (the user in the conversation).
-When creating or updating memories, you MUST clearly indicate WHO the fact is about in the content:
-- Facts about this entity (assistant): start with "나는 ~" or "${entityName || 'this entity'}는 ~"  (e.g. "나는 커피를 좋아한다", "나는 서울에 산다")
-- Facts about the partner (user): start with "${partnerName || '상대방'}은(는) ~" or "상대방은 ~"  (e.g. "${partnerName || '상대방'}은(는) 서울에 산다", "${partnerName || '상대방'}은(는) 개발자이다")
-- NEVER store a partner's fact without clearly attributing it to "${partnerName || '상대방'}". If the user says "I live in Seoul", the memory content must be "${partnerName || '상대방'}은(는) 서울에 산다", NOT "서울에 산다" or "I live in Seoul".
-- NEVER confuse who said what. The "user" role in the conversation is ${partnerName || 'the partner'}, the "assistant" role is ${entityName || 'this entity'}.
-- Store facts from BOTH sides — do not skip facts said by the assistant (${entityName || 'this entity'}). If the assistant says "나는 녹차를 좋아해", create a memory like "${entityName || '나'}는 녹차를 좋아한다".`
-        : '';
-
-    return `You are a memory manager for an entity in a chat.
-You are given:
-1. **Existing memories** for this entity (each with id, content, outgoingEdges). This list is the result of one retrieval from the conversation; you may only reference memory IDs that appear in this list. You cannot reference or update memories that are not listed here.
-2. The recent conversation.
-${ownershipBlock}
-Output a JSON object with a single key "operations": an array of memory operations. Each operation must use exactly the schema below (other fields are ignored).
-
-**Exact operation schema (use these field names only):**
-- create: { "action": "create", "content": string, "relatedMemoryIds"?: string[] }  — relatedMemoryIds must be UUIDs from Existing memories only.
-- update: { "action": "update", "memoryId": string, "content": string }  — memoryId must be from Existing memories.
-- updateLink: { "action": "updateLink", "fromMemoryId": string, "toMemoryId": string, "linkAction": "add" | "remove" }  — both IDs from Existing memories; only "add" or "remove".
-- delete: { "action": "delete", "memoryId": string }  — memoryId from Existing memories.
-
-**When to use:**
-- create: New fact about this entity OR its partner not already in existing memories. Avoid duplicates; if similar content exists, use update instead.
-- update: Existing memory content has changed (e.g. "I live in NYC" → user said "I moved to Boston"). Do NOT use create when the fact is an update.
-- updateLink: Two existing memories are related (add link) or no longer related (remove). Only add if not already in outgoingEdges.
-- delete: Memory is clearly wrong or no longer needed. Prefer update over delete when possible.
-
-**Example:** { "operations": [ { "action": "create", "content": "${partnerName || '상대방'}은(는) 커피를 좋아한다", "relatedMemoryIds": [] } ] }
-
-**Rules:**
-- Only output operations clearly implied by the conversation. If nothing to do, output { "operations": [] }.
-- Use UUIDs from the "Existing memories" list only. Do not invent IDs.
-- Prefer update over create when the conversation changes previously stated information.${ownershipBlock ? '\n- ALWAYS include the subject (who the fact is about) in the memory content.' : ''}
-${contentLanguageRule}
-Output ONLY valid JSON. No markdown code fences.`;
-  }
-
-  private static formatExistingMemoriesForPrompt(memories: Memory[]): string {
-    if (memories.length === 0) return '(none)';
-    return memories
-      .map(
-        m =>
-          `- id: ${m.id}\n  content: ${m.content}\n  outgoingEdges: [${(m.outgoingEdges ?? []).join(', ')}]`,
-      )
-      .join('\n');
-  }
-
-  private static parseOperationsFromResponse(content: string): MemoryOperation[] {
-    const trimmed = content
-      .trim()
-      .replace(/^```json?\s*|\s*```$/g, '')
-      .trim();
-    let parsed: { operations?: unknown[] };
-    try {
-      parsed = JSON.parse(trimmed) as { operations?: unknown[] };
-    } catch {
-      return [];
-    }
-    const ops = Array.isArray(parsed?.operations) ? parsed.operations : [];
-    const valid: MemoryOperation[] = [];
-    for (const o of ops) {
-      if (!o || typeof o !== 'object' || !('action' in o)) continue;
-      const raw = o as Record<string, unknown>;
-      const a = raw.action as string;
-      if (a === 'create' && typeof raw.content === 'string') {
-        valid.push({
-          action: 'create',
-          content: raw.content,
-          relatedMemoryIds: Array.isArray(raw.relatedMemoryIds)
-            ? (raw.relatedMemoryIds as string[]).filter((s: unknown) => typeof s === 'string')
-            : undefined,
-        });
-      } else if (
-        a === 'update' &&
-        typeof raw.memoryId === 'string' &&
-        typeof raw.content === 'string'
-      ) {
-        valid.push({ action: 'update', memoryId: raw.memoryId, content: raw.content });
-      } else if (
-        a === 'updateLink' &&
-        typeof raw.fromMemoryId === 'string' &&
-        typeof raw.toMemoryId === 'string' &&
-        (raw.linkAction === 'add' || raw.linkAction === 'remove')
-      ) {
-        valid.push({
-          action: 'updateLink',
-          fromMemoryId: raw.fromMemoryId,
-          toMemoryId: raw.toMemoryId,
-          linkAction: raw.linkAction as 'add' | 'remove',
-        });
-      } else if (a === 'delete' && typeof raw.memoryId === 'string') {
-        valid.push({ action: 'delete', memoryId: raw.memoryId });
-      }
-    }
-    return valid;
-  }
-
-  private async runAfterResponseWithContext(
-    context: ConversationContext,
-    contextAdapter: AfterResponseContextAdapter,
-  ): Promise<void> {
-    const { messages } = context;
-    if (!messages?.length) return;
-
-    // Package decides how much context to use (e.g. last 8 messages)
-    const slice = messages.slice(-8);
-    const conversationText = slice.map(m => `${m.role}: ${m.content}`).join('\n');
-
-    if (this.config.verbose) {
-      console.log('[Memory] verbose runAfterResponseWithContext: slice', slice.length, 'messages');
-    }
-
-    // Single retrieval: "Existing memories" shown to the LLM are from this one getContext call.
-    // todo: Future: allow the memory-manager LLM to run memory search (e.g. as a tool) multiple times before deciding operations.
+    const source = options.source ?? 'host';
     const runScope =
       this.config.runWithEmbeddingScope ?? (<T>(_scope: 'search' | 'write', fn: () => T) => fn());
-    let existingMemories: Memory[] = [];
-    try {
-      const memContext = await runScope('search', () => this.getContext(conversationText));
-      existingMemories = memContext.memories ?? [];
-    } catch {
-      // continue with empty
-    }
+    const result: ApplyOperationsResult = {
+      applied: 0,
+      failed: 0,
+      createdIds: [],
+      skippedByGate: 0,
+      outcomes: [],
+    };
 
-    if (this.config.verbose) {
-      console.log(
-        '[Memory] verbose existingMemories:',
-        existingMemories.length,
-        existingMemories.map(m => ({ id: m.id, content: m.content })),
-      );
-    }
-
-    // Structured messages so the LLM sees user vs assistant (replica) roles; replica messages are not flattened into one blob.
-    const preamble = `Existing memories for this entity:
-${MemoryConnector.formatExistingMemoriesForPrompt(existingMemories)}
-
-Use the conversation below to decide operations.`;
-
-    const conversationMessages = slice.map(m => ({ role: m.role, content: m.content }));
-    const tail = 'Output JSON: { "operations": [ ... ] }';
-
-    const messagesToSend: Array<{ role: string; content: string }> = [
-      { role: 'system', content: this.buildAfterResponseSystemPrompt() },
-      { role: 'user', content: preamble },
-      ...conversationMessages,
-      { role: 'user', content: tail },
-    ];
-
-    let raw: string;
-    try {
-      raw = await contextAdapter.generate(messagesToSend);
-    } catch (err) {
-      console.error('[Memory] contextAdapter.generate error:', err);
-      return;
-    }
-
-    if (this.config.verbose) {
-      console.log('[Memory] verbose LLM raw (first 500 chars):', raw.slice(0, 500));
-    }
-
-    const operations = MemoryConnector.parseOperationsFromResponse(raw);
-    console.log(
-      '[Memory] after-response:',
-      operations.length,
-      'operations',
-      operations.length > 0 ? operations.map(o => o.action) : '',
-    );
     for (const op of operations) {
       try {
-        await runScope('write', async () => {
+        const outcome = await runScope('write', async (): Promise<ApplyOperationOutcome> => {
           if (op.action === 'create') {
             const gateMode = this.tuning.dedupGateMode;
             const judgement = gateMode === 'off' ? null : await this.judgeDedupGate(op.content);
@@ -672,7 +497,16 @@ Use the conversation below to decide operations.`;
             if (judgement && (gateMode === 'shadow' || gateMode === 'active')) {
               this.recordGateDecision(gateMode, op.content, judgement, skip, createdId);
             }
+            return skip
+              ? {
+                  action: 'create',
+                  ok: true,
+                  skippedByGate: true,
+                  ...(judgement?.top ? { memoryId: judgement.top.id } : {}),
+                }
+              : { action: 'create', ok: true, ...(createdId ? { memoryId: createdId } : {}) };
           } else if (op.action === 'update') {
+            await this.assertOwnedMemory(op.memoryId);
             const updated = await this.updateMemory(op.memoryId, op.content);
             if (this.config.verbose) {
               console.log('[Memory] verbose update:', {
@@ -680,6 +514,7 @@ Use the conversation below to decide operations.`;
                 newContent: updated.content,
               });
             }
+            return { action: 'update', ok: true, memoryId: op.memoryId };
           } else if (op.action === 'updateLink') {
             const linked = await this.updateMemoryLink(
               op.fromMemoryId,
@@ -694,20 +529,63 @@ Use the conversation below to decide operations.`;
                 outgoingEdges: linked.outgoingEdges,
               });
             }
+            return { action: 'updateLink', ok: true, memoryId: op.fromMemoryId };
           } else if (op.action === 'delete') {
             // Soft delete: the extraction LLM's "no longer needed" verdict is a
             // demotion (ranking penalty), never a physical delete. A later
             // re-mention bump restores the node. Physical deletion stays a
             // host-only explicit operation (deleteMemory()).
+            await this.assertOwnedMemory(op.memoryId);
             await this.storage.setMemoryStatus(op.memoryId, 'demoted');
             if (this.config.verbose) {
               console.log('[Memory] verbose delete → demoted:', { memoryId: op.memoryId });
             }
+            return { action: 'delete', ok: true, memoryId: op.memoryId };
+          } else {
+            // applyOperations is public and hosts may pass JSON-derived data.
+            throw new Error(
+              `Unknown memory operation action: ${String((op as { action?: unknown }).action)}`,
+            );
           }
         });
+        result.outcomes.push(outcome);
+        result.applied++;
+        if (outcome.action === 'create') {
+          if (outcome.skippedByGate) result.skippedByGate++;
+          else if (outcome.memoryId) result.createdIds.push(outcome.memoryId);
+        }
       } catch (err) {
-        console.error('[Memory] operation error:', op.action, err);
+        console.error(`[Memory] operation error (${source}):`, op.action, err);
+        result.failed++;
+        result.outcomes.push({
+          action: op.action,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
+    }
+    if (this.config.verbose) {
+      console.log(`[Memory] applyOperations (${source}):`, {
+        applied: result.applied,
+        failed: result.failed,
+        skippedByGate: result.skippedByGate,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Throws unless the memory exists and belongs to this connector's entity.
+   * Guards update/delete in {@link MemoryConnector.applyOperations} so a stale
+   * or foreign id becomes a failed outcome instead of a silent no-op.
+   *
+   * @param memoryId - Memory UUID
+   * @throws Error when the memory is missing or owned by another entity
+   */
+  private async assertOwnedMemory(memoryId: string): Promise<void> {
+    const existing = await this.storage.getMemory(memoryId);
+    if (!existing || existing.entityId !== this.config.entityId) {
+      throw new Error(`Memory not found for entity: ${memoryId}`);
     }
   }
 
