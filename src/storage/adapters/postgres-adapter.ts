@@ -7,6 +7,7 @@
 
 import type { MemoryStorageAdapter } from '../../adapters/database-adapter';
 import type {
+  MemoryBatchInsert,
   Memory,
   EdgeTraversalStat,
   GateDecisionRecord,
@@ -93,6 +94,40 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       createdAt: result.rows[0].created_at,
       updatedAt: result.rows[0].updated_at,
     };
+  }
+
+  async createMemoriesBatch(items: MemoryBatchInsert[]): Promise<Memory[]> {
+    if (items.length === 0) return [];
+    const schema = this.config.schema || 'memory';
+    const pgvector = await import('pgvector/pg');
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+    let i = 1;
+    for (const it of items) {
+      placeholders.push(`($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, NOW(), NOW())`);
+      values.push(it.id, it.entityId, it.content, pgvector.toSql(it.embedding), it.outgoingEdges ?? []);
+    }
+    const result = await this.client.query(
+      `INSERT INTO ${schema}.memories (id, entity_id, content, embedding, outgoing_edges, created_at, updated_at)
+       VALUES ${placeholders.join(', ')}
+       RETURNING id, created_at, updated_at`,
+      values,
+    );
+    const byId = new Map<string, { created_at: Date; updated_at: Date }>(
+      result.rows.map((r: { id: string; created_at: Date; updated_at: Date }) => [r.id, r]),
+    );
+    return items.map(it => {
+      const row = byId.get(it.id)!;
+      return {
+        id: it.id,
+        entityId: it.entityId,
+        content: it.content,
+        embedding: it.embedding,
+        outgoingEdges: it.outgoingEdges ?? [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
   }
 
   async getMemory(memoryId: string): Promise<Memory | null> {

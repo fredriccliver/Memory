@@ -6,6 +6,7 @@
  */
 
 import type {
+  MemoryBatchInsert,
   Memory,
   EdgeTraversalStat,
   GateDecisionRecord,
@@ -31,6 +32,17 @@ export interface MemoryStorageAdapter {
    * @returns Created memory with generated UUID (not table index)
    */
   createMemory(memory: Omit<Memory, 'id' | 'createdAt' | 'updatedAt'>): Promise<Memory>;
+
+  /**
+   * Inserts many memories in ONE statement (atomic without an explicit
+   * transaction — the adapter shares a single client across requests, so
+   * BEGIN/COMMIT would capture unrelated queries). Rows come back in input order.
+   *
+   * @param items - Rows with caller-generated ids and precomputed embeddings
+   * @returns Created memories in input order; empty input → empty array
+   * @throws Error when any row is rejected (then no row was inserted)
+   */
+  createMemoriesBatch(items: MemoryBatchInsert[]): Promise<Memory[]>;
 
   /**
    * Get a memory by UUID
