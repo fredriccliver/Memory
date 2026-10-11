@@ -10,6 +10,7 @@ import type { MemoryStorageAdapter } from '../adapters/database-adapter';
 import { Memory, SearchMode } from '../types';
 import { getThresholdFromMode } from '../types';
 import type {
+  MemoryBatchInsert,
   EdgeTraversalStat,
   GateDecisionRecord,
   MemoryEdge,
@@ -80,6 +81,19 @@ export class MemoryStorage {
       ...memory,
       embedding,
     });
+  }
+
+  /**
+   * Inserts many memories at once. Embeddings must be precomputed (bulk plans
+   * carry them); nothing is generated here.
+   *
+   * @param items - Rows with ids and embeddings
+   * @returns Created memories in input order
+   *
+   * @public
+   */
+  async createMemoriesBatch(items: MemoryBatchInsert[]): Promise<Memory[]> {
+    return this.adapter.createMemoriesBatch(items);
   }
 
   /**
