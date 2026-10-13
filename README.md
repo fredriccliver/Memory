@@ -108,6 +108,39 @@ This allows you to:
 - Use any AI provider (OpenAI, Anthropic, etc.)
 - Switch implementations without changing application code
 
+### Write contract (LLM-free)
+
+The package does not decide what to remember. The host's model does — the main
+session, a dedicated extraction call, or an MCP tool — and the package stores the
+result by rules (dedup gate, kNN seeding, sleep queue). The contract has three
+pieces:
+
+```typescript
+import {
+  buildWorkingSet,
+  buildMemoryWriteInstructions,
+  parseMemoryOperations,
+} from '@openaikits/memory';
+
+const ws = buildWorkingSet(shownMemories); // m1..mN aliases ↔ UUIDs
+const contract = buildMemoryWriteInstructions(ws, { entityName, partnerName });
+const system = `${hostPreamble}\n\n${contract}\n\n${hostMemoryCriterion}`;
+// ... call your model with `system` + the conversation ...
+const { operations } = parseMemoryOperations(reply, ws);
+await connector.applyOperations(operations, { source: 'my-host' });
+```
+
+`buildMemoryWriteInstructions` is **domain-neutral**: it states who a fact is
+about, when to create / update / link / delete, the alias rule and the output
+block, plus a generous posture ("store it; the memory layer deduplicates"). It
+does not say what is worth remembering in your product, and no option takes
+that text. Append your own criterion after it (`hostMemoryCriterion` above):
+a companion chat might keep facts about the two people and drop stage
+directions; a work assistant might keep decisions, owners and deadlines. Without
+it, a judge model takes the generic posture literally. For tool-style hosts,
+`writeInstructionParts` returns the same wording in pieces for tool
+descriptions; the host criterion goes in the server or system prompt.
+
 ### Memory Structure
 
 Each memory is a **node** in a graph structure:

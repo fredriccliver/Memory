@@ -6,6 +6,12 @@
  * Nothing in this module calls a model or touches storage. Design:
  * docs/specs/2026-10-11-llm-free-write-contract.ko.md §3.
  *
+ * The instruction text is domain-neutral by design: it states the contract
+ * (ownership, when to create/update/link/delete, aliases, output block) and a
+ * generous posture — it does not say what is worth remembering in a given
+ * product. The host appends that criterion after the text; see
+ * {@link buildMemoryWriteInstructions}.
+ *
  * @public
  */
 import type { MemoryOperation } from '../types';
@@ -56,7 +62,11 @@ export const DEFAULT_MEMORY_OPS_BLOCK_TAG = 'MEMORY_OPS';
 /** Default cap on operations accepted from one reply. */
 export const DEFAULT_MAX_OPERATIONS = 10;
 
-/** Options shared by the instruction builder and its parts. */
+/**
+ * Options shared by the instruction builder and its parts. None of them carries
+ * domain wording: what counts as memorable in your product is appended by the
+ * host after the returned text (see {@link buildMemoryWriteInstructions}).
+ */
 export interface WriteInstructionOptions {
   /** This entity's display name (the assistant). Enables the ownership block. */
   entityName?: string;
@@ -85,7 +95,15 @@ export interface WriteInstructionParts {
 }
 
 /**
- * Returns the instruction text as separate parts.
+ * Returns the instruction text as separate parts — the same wording as
+ * {@link buildMemoryWriteInstructions}, split for hosts that describe the
+ * contract piece by piece (tool descriptions, MCP prompts, function-calling
+ * schemas): `ownership` + `usage` fit a tool description, `idRule` + `format`
+ * fit the parameter and output description.
+ *
+ * The parts are domain-neutral. The host's own criterion for what is worth
+ * remembering belongs in the host's system prompt or server prompt, next to
+ * these parts — not inside them.
  *
  * @param options - Names, locale, tag, cap
  * @returns Parts; `ownership` is empty when neither name is given
@@ -153,13 +171,35 @@ The block must be valid JSON. No markdown code fences inside the block. Never pu
 /**
  * Builds the memory-write instruction text the host appends to its own prompt.
  *
- * Contains no model-specific wording. By default it does not repeat the working
- * set (the host's memory block already shows it); `includeWorkingSetList`
- * adds an alias + content list for hosts without such a block.
+ * Contains no model-specific and no domain-specific wording. The text states
+ * the contract — who a fact is about, when to create / update / link / delete,
+ * aliases only, the output block — and a generous posture ("store it; the
+ * memory layer deduplicates"). It deliberately does not say what is worth
+ * remembering in your product: that is the host's decision, and it changes
+ * per host (a companion chat remembers facts about the two people and skips
+ * stage directions; a work assistant remembers decisions, owners and
+ * deadlines). Append your criterion as a short paragraph after this text, in
+ * the host's own words. Without it a judge model takes the generic posture
+ * literally and stores whatever the turn contains.
+ *
+ * The package then deduplicates, links and ranks whatever the host stores;
+ * the host decides content. No option of this function carries domain text.
+ *
+ * By default it does not repeat the working set (the host's memory block
+ * already shows it); `includeWorkingSetList` adds an alias + content list for
+ * hosts without such a block (a dedicated extraction call, an MCP tool).
  *
  * @param workingSet - Aliases the reply may reference
  * @param options - Names, locale, block tag, cap, list toggle
  * @returns Instruction text (plain, prompt-ready)
+ *
+ * @example
+ * ```ts
+ * const ws = buildWorkingSet(shownMemories);
+ * const contract = buildMemoryWriteInstructions(ws, { entityName, partnerName });
+ * // Host-owned criterion, appended after the neutral contract:
+ * const system = `${hostPreamble}\n\n${contract}\n\n${hostMemoryCriterion}`;
+ * ```
  *
  * @public
  */
