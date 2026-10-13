@@ -117,14 +117,17 @@ When creating or updating memories, you MUST state WHO the fact is about in the 
 - Store facts from BOTH sides — do not skip facts the assistant said about itself.`
       : '';
 
-  const usage = `**Writing posture — be generous. The memory layer deduplicates.**
-- Near-duplicate facts are merged or skipped automatically by the memory layer. Never withhold a fact because something similar may already be stored.
-- Every turn in which either side states or implies a personal fact, preference, habit, relationship, plan, event, or feeling about something should yield at least one create. Several creates per turn are normal.
-- create: a fact about this entity OR its partner that this turn brought up.
+  const usage = `**Writing posture — generous with durable facts, strict about what counts.**
+- The memory layer deduplicates near-duplicates automatically. Never withhold a durable fact because something similar may already be stored.
+- Store what will still matter in a later conversation: facts about either person — identity, background, preferences, habits, relationships, plans, decisions, events that happened, stated feelings about something.
+- Do NOT store momentary narration: gestures, facial expressions, posture, bodily reactions, tone of voice, or what someone is doing at this instant (e.g. "smiled", "narrowed his eyes", "is drinking coffee right now"). These describe the moment, not the person.
+- Do NOT restate a fact that a shown memory already contains, and do not emit the same fact twice in one turn — one durable fact, once.
+- A turn that brings up new durable information should yield a create; several creates per turn are normal.
+- create: a durable fact about this entity OR its partner that this turn brought up.
 - update: a shown memory whose content has changed (e.g. "lives in NYC" → "moved to Boston"). Use update, not create, when the new fact replaces an earlier one.
 - updateLink: two shown memories that belong together (add) or no longer do (remove).
 - delete: a shown memory that is clearly wrong. Prefer update over delete.
-- Output an empty array only when the turn carries no personal information at all (a bare greeting, small talk without content).`;
+- Output an empty array when the turn carries no durable personal information (a bare greeting, small talk, pure action or scene narration).`;
 
   const idRule = `**IDs and relations:** the memories shown to you carry aliases like m1, m2, …. Reference memories ONLY by those aliases, and only aliases that appear in the list. Do not invent aliases or IDs.
 Linking is required: for every create, put in relatedMemoryIds the aliases of the shown memories it belongs with — a cause or consequence, the same episode, the same person or topic, an elaboration or a contradiction. Aim for 1–3. Similar wording alone is not a reason (the memory layer handles that); leave the list empty only when nothing shown is related.`;
