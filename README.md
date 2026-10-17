@@ -119,13 +119,15 @@ pieces:
 import {
   buildWorkingSet,
   buildMemoryWriteInstructions,
+  buildConversationTranscript,
   parseMemoryOperations,
 } from '@openaikits/memory';
 
 const ws = buildWorkingSet(shownMemories); // m1..mN aliases ↔ UUIDs
-const contract = buildMemoryWriteInstructions(ws, { entityName, partnerName });
+const contract = buildMemoryWriteInstructions(ws, { entityName, partnerName, includeWorkingSetList: true });
 const system = `${hostPreamble}\n\n${contract}\n\n${hostMemoryCriterion}`;
-// ... call your model with `system` + the conversation ...
+const user = buildConversationTranscript(recentMessages, { entityName, partnerName });
+const reply = await model.generate([{ role: 'system', content: system }, { role: 'user', content: user }]);
 const { operations } = parseMemoryOperations(reply, ws);
 await connector.applyOperations(operations, { source: 'my-host' });
 ```
@@ -140,6 +142,14 @@ directions; a work assistant might keep decisions, owners and deadlines. Without
 it, a judge model takes the generic posture literally. For tool-style hosts,
 `writeInstructionParts` returns the same wording in pieces for tool
 descriptions; the host criterion goes in the server or system prompt.
+
+Feed the conversation as **data**, not as a live chat. If the request to output
+the block is sent as one more `user` message after the chat turns, a model can
+attribute it to the partner and store "the partner asked me to output the memory
+block" as a fact. `buildConversationTranscript` wraps the window in
+`<conversation>…</conversation>` with speaker labels and puts the request
+outside it; the instruction text also tells the model that instructions are
+never facts.
 
 ### Memory Structure
 
