@@ -50,6 +50,7 @@ export type {
 export {
   buildWorkingSet,
   buildMemoryWriteInstructions,
+  buildConversationTranscript,
   writeInstructionParts,
   DEFAULT_MEMORY_OPS_BLOCK_TAG,
   DEFAULT_MAX_OPERATIONS,
@@ -61,6 +62,8 @@ export type {
   WorkingSetEntry,
   WriteInstructionOptions,
   WriteInstructionParts,
+  TranscriptMessage,
+  TranscriptOptions,
   ParseDropReason,
   ParseMemoryOperationsResult,
 } from './memory/write-contract';
