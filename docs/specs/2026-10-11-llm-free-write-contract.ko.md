@@ -120,61 +120,37 @@ export function buildWorkingSet(
 - 별칭을 쓰는 이유는 비용이다. UUID 36자는 메모리당 20토큰 남짓이고 매 턴 대화 모델
   입력에 실린다. 별칭이면 거의 0이다.
 
-### 3-2. 지시문 빌더
+### 3-2. 지시문 빌더 — 프로토콜만
 
 ```ts
 export interface WriteInstructionOptions {
-  entityName?: string;
-  partnerName?: string;
-  contentLocale?: 'ko' | 'en';      // 기본 'ko'
   blockTag?: string;                // 기본 'MEMORY_OPS'
   maxOperations?: number;           // 기본 10
   includeWorkingSetList?: boolean;  // 기본 false
 }
-export function buildMemoryWriteInstructions(
-  workingSet: WorkingSet,
-  options?: WriteInstructionOptions,
-): string;
+export function buildMemoryWriteInstructions(workingSet: WorkingSet, options?: WriteInstructionOptions): string;
+export function writeInstructionParts(options?: WriteInstructionOptions): { operations: string; idRule: string; format: string };
 ```
 
-내용은 오늘 `buildAfterResponseSystemPrompt`가 담고 있는 규율 전부다.
-- 소유 귀속: 엔티티 자신의 사실과 상대의 사실을 주어로 구분해 쓴다.
-- 사용 기준: 새 사실 → create, 바뀐 사실 → update(create 금지), 두 기억의 관계 →
-  updateLink, 틀렸거나 불필요 → delete(강등). 중복 금지, 명시적으로 함의된 것만.
-- 언어: content는 `contentLocale`로.
-- ID 규칙: 작업 세트의 별칭만 쓴다. 새 ID를 지어내지 않는다.
-- 출력 형식: 응답 끝에 `[MEMORY_OPS] { "operations": [ … ] } [/MEMORY_OPS]`. 쓸 것이
-  없으면 `{ "operations": [] }`. 코드펜스 금지.
+**원칙(2026-10-18 확정)**: 메모리는 플랫폼 독립적이며 "저장할 만한가"를 판단하지 않는다.
+호출자가 "저장할 것인가"를 정해 메모리를 부른다. 잘못된 노드가 들어오면 메모리는 가려낼 수
+없고, 디버깅은 부르는 쪽에서 한다. 따라서 지시문은 **파서가 읽을 출력을 정의하는 프로토콜만**
+담는다.
+- 연산 의미: create · update · updateLink · delete가 실행기에서 무엇을 하는지(delete = 강등).
+- ID 규칙: 작업 세트의 별칭만 쓴다. 모르는 별칭을 참조한 연산은 파서가 버린다.
+- 출력 형식: 응답 끝에 `[MEMORY_OPS] { "operations": [ … ] } [/MEMORY_OPS]`, 스키마, 상한,
+  쓸 것이 없으면 `{ "operations": [] }`, 코드펜스 금지.
+- 작업 세트 목록(선택, `includeWorkingSetList`): 메모리 블록이 따로 없는 2차 호출이나 MCP용.
 
-모델 이름이나 호스트 고유 문구는 넣지 않는다. 작업 세트 목록은 호스트의 메모리
-블록이 이미 보여 주므로 기본값에서는 **별칭 규칙만 설명하고 목록을 반복하지 않는다**.
-`includeWorkingSetList: true`는 목록까지 넣는다(메모리 블록이 따로 없는 2차 호출
-형태나 MCP용).
+지시문에 **없는 것**: 무엇을 저장할지, 얼마나 후하게 쓸지, 어느 쪽의 사실인지 주어를 어떻게 쓸지,
+어떤 언어로 쓸지, 대화의 어느 줄이 새 것인지, 지시와 대화를 어떻게 구분할지. 전부 호스트의
+판단자 프롬프트(또는 메인 세션의 판단) 몫이다. 피벗 초기에는 구 추출 프롬프트의 판단 규율을
+"동작 유지" 명목으로 이 빌더에 옮겨 두었는데, 그것은 월권이었고 2026-10-18에 걷어 냈다(호스트
+뉴미는 같은 문장을 자기 프롬프트로 가져갔다). 호스트별 옵션(이름 · 언어 · 도메인 지침 ·
+입력 구조 헬퍼)도 두지 않는다 — 사용처마다 그 구조로 바꾸는 어댑터를 요구하게 된다.
 
-**호스트 지침(무엇을 기억할지의 기준)은 호스트가 덧붙인다.** 지시문은 계약(귀속 ·
-연산 사용 기준 · 별칭 · 출력 형식)과 "후하게 쓰라, 중복은 메모리 층이 거른다"는 자세까지만
-말하고, 어떤 사실이 그 제품에서 기억할 가치가 있는지는 말하지 않는다. 그 기준은 호스트마다
-다르다 — 동반자 채팅은 두 사람에 관한 사실을 남기고 그 순간의 지문(표정 · 몸짓)은 남기지
-않으며, 업무 보조 도구는 결정 · 담당자 · 마감을 남긴다. 호스트는 자기 말로 쓴 짧은 한
-단락을 지시문 **뒤에** 이어 붙인다(§8의 도구 형태에서는 서버 프롬프트나 클라이언트
-시스템 프롬프트에 둔다). 이 단락이 없으면 판단 모델은 "후하게"를 글자 그대로 받아 턴에
-있는 것을 그대로 저장한다. 패키지는 호스트가 저장한 것을 중복 제거 · 연결 · 랭킹할 뿐
-내용을 고르지 않으며, 이 기준을 받는 옵션을 두지 않는다(호스트마다 늘어나는 옵션은
-패키지를 호스트에 묶는다).
-
-**입력 구조 — 대화는 데이터, 지시는 바깥에.** 지시문에는 "사실은 대화에서만 나온다. 너에게
-주어진 지시(이 지시문 · 보여 준 메모리 목록 · 블록 출력 요청)는 어느 쪽의 사실도 아니다"라는
-읽기 규칙이 들어 있다. 그러나 문장만으로는 부족하다. 호스트가 대화 턴 뒤에 user 역할로
-"블록을 출력하라"를 한 번 더 붙이면, 모델은 그 줄을 상대의 발화로 읽고 "상대가 블록 출력을
-요청했다"를 사실로 저장할 수 있다(운영 관측 2026-10-18, 채팅 생성의 0.5%). 전용 추출 호출은
-대화 창을 `<conversation> … </conversation>` 안에 화자 이름을 붙인 transcript로 넣고, 요청은
-그 바깥에 둔다. `buildConversationTranscript(messages, { entityName, partnerName })`가 이
-모양을 만든다(순수 문자열, LLM 호출 없음). 융합 방식(메인 세션이 응답 끝에 블록을 냄)은
-지시가 시스템 프롬프트에만 있으므로 이 문제가 구조적으로 없다.
-
-빌더는 조각 단위로도 내보낸다. `writeInstructionParts(options)`가 `{ ownership, usage,
-format, idRule }` 문자열을 돌려주고, 전체 빌더는 이것을 이어 붙인다. §8의 도구 설명이
-이 조각을 쓴다.
+모델 이름이나 호스트 고유 문구는 넣지 않는다. 조각(`writeInstructionParts`)은 §8의 도구
+설명이 쓴다.
 
 ### 3-3. 파서
 
