@@ -110,46 +110,28 @@ This allows you to:
 
 ### Write contract (LLM-free)
 
-The package does not decide what to remember. The host's model does — the main
-session, a dedicated extraction call, or an MCP tool — and the package stores the
-result by rules (dedup gate, kNN seeding, sleep queue). The contract has three
-pieces:
+The package does not decide what to remember. The caller does — a main session, a
+dedicated extraction call, or an MCP tool — and calls the package with operations;
+the package stores them by rules (dedup gate, kNN seeding, sleep queue). It cannot
+tell a wrong node from a right one: if bad memories appear, debug the caller.
 
 ```typescript
-import {
-  buildWorkingSet,
-  buildMemoryWriteInstructions,
-  buildConversationTranscript,
-  parseMemoryOperations,
-} from '@openaikits/memory';
+import { buildWorkingSet, buildMemoryWriteInstructions, parseMemoryOperations } from '@openaikits/memory';
 
 const ws = buildWorkingSet(shownMemories); // m1..mN aliases ↔ UUIDs
-const contract = buildMemoryWriteInstructions(ws, { entityName, partnerName, includeWorkingSetList: true });
-const system = `${hostPreamble}\n\n${contract}\n\n${hostMemoryCriterion}`;
-const user = buildConversationTranscript(recentMessages, { entityName, partnerName });
-const reply = await model.generate([{ role: 'system', content: system }, { role: 'user', content: user }]);
+const protocol = buildMemoryWriteInstructions(ws, { includeWorkingSetList: true });
+const system = `${yourJudgmentPrompt}\n\n${protocol}`; // what to store is yours; the protocol is the package's
+// ... call your model ...
 const { operations } = parseMemoryOperations(reply, ws);
 await connector.applyOperations(operations, { source: 'my-host' });
 ```
 
-`buildMemoryWriteInstructions` is **domain-neutral**: it states who a fact is
-about, when to create / update / link / delete, the alias rule and the output
-block, plus a generous posture ("store it; the memory layer deduplicates"). It
-does not say what is worth remembering in your product, and no option takes
-that text. Append your own criterion after it (`hostMemoryCriterion` above):
-a companion chat might keep facts about the two people and drop stage
-directions; a work assistant might keep decisions, owners and deadlines. Without
-it, a judge model takes the generic posture literally. For tool-style hosts,
-`writeInstructionParts` returns the same wording in pieces for tool
-descriptions; the host criterion goes in the server or system prompt.
-
-Feed the conversation as **data**, not as a live chat. If the request to output
-the block is sent as one more `user` message after the chat turns, a model can
-attribute it to the partner and store "the partner asked me to output the memory
-block" as a fact. `buildConversationTranscript` wraps the window in
-`<conversation>…</conversation>` with speaker labels and puts the request
-outside it; the instruction text also tells the model that instructions are
-never facts.
+`buildMemoryWriteInstructions` is **protocol only**: the four operations and what the
+executor does with them, the alias rule, and the output block schema. It says nothing
+about what is worth storing, how generous to be, whose fact it is, which language to
+write, or how your conversation is structured — all of that is your prompt. For
+tool-style hosts, `writeInstructionParts` returns the same text in pieces for tool
+descriptions.
 
 ### Memory Structure
 
