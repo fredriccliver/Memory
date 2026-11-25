@@ -99,3 +99,8 @@ export * from './vector/openai-adapter';
 // Graph components will be exported here as they are implemented
 // export * from './graph/relationship-engine';
 // export * from './graph/traversal';
+
+export { traverseMemory, MAX_MEMORY_HOPS } from './memory/memory-paths';
+export type { MemoryPath, MemoryPathStorage } from './memory/memory-paths';
+export { issueMemoryUseReceipt, memoryWorkUsageSchema, memoryWorkUsageSchemaFor, recordMemoryUse } from './memory/memory-use';
+export type { MemoryLinkChange } from './memory/memory-use';

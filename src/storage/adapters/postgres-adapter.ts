@@ -1,3 +1,4 @@
+import type { MemoryPathEdgeScan } from '../../types';
 /**
  * PostgreSQL Storage Adapter
  *
@@ -235,6 +236,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     entityId: string,
     limit: number = 10,
     threshold: number = 0.7,
+    statuses?: readonly string[],
   ): Promise<Memory[]> {
     const schema = this.config.schema || 'memory';
     const query = `
@@ -242,6 +244,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       FROM ${schema}.memories
       WHERE entity_id = $2
         AND embedding IS NOT NULL
+        AND ($5::text[] IS NULL OR coalesce(status, 'active') = any($5::text[]))
         AND 1 - (embedding <=> $1::vector) >= $3
       ORDER BY embedding <=> $1::vector
       LIMIT $4
@@ -251,7 +254,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     const pgvector = await import('pgvector/pg');
     const embeddingValue = pgvector.toSql(embedding);
 
-    const result = await this.client.query(query, [embeddingValue, entityId, threshold, limit]);
+    const result = await this.client.query(query, [embeddingValue, entityId, threshold, limit, statuses ?? null]);
 
     return result.rows.map((row: any) => this.mapRowToMemory(row));
   }
@@ -477,9 +480,34 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   /**
    * Get all edges touching any of the given memories (either direction)
    */
-  async getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]> {
+  async getEdgesTouching(memoryIds: string[], scan?: MemoryPathEdgeScan): Promise<MemoryEdge[]> {
     if (memoryIds.length === 0) return [];
     const schema = this.config.schema || 'memory';
+    if (scan) {
+      const result = await this.client.query(
+        `
+        with frontier as (
+          select * from jsonb_to_recordset($1::jsonb) as path(node_id uuid, strength double precision, visited uuid[])
+        )
+        select e.*, max(
+          ln(nullif(path.strength, 0)) + ln(nullif(e.strength, 0)) -
+          $4::double precision * greatest(0, extract(epoch from (now() - e.strength_updated_at)) / 86400)
+        ) as path_score
+        from frontier path
+        join ${schema}.edges e on e.from_id = path.node_id or e.to_id = path.node_id
+        join ${schema}.memories target
+          on target.id = case when e.from_id = path.node_id then e.to_id else e.from_id end
+        where e.entity_id = $2 and target.entity_id = $2
+          and coalesce(target.status, 'active') = any($3::text[])
+          and not target.id = any(path.visited)
+        group by e.id
+        order by path_score desc nulls last, e.id
+        limit $5
+        `,
+        [JSON.stringify(scan.frontier), scan.entityId, scan.statuses, scan.decayLambda, scan.limit],
+      );
+      return result.rows.map((row: any) => this.mapRowToEdge(row));
+    }
     const result = await this.client.query(
       `
       SELECT id, entity_id, from_id, to_id, type, origin, strength, created_at, strength_updated_at
@@ -491,9 +519,6 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     return result.rows.map((row: any) => this.mapRowToEdge(row));
   }
 
-  /**
-   * Record that memories were retrieved (usage signal for ranking/forgetting)
-   */
   async recordNodeRetrievals(memoryIds: string[]): Promise<void> {
     if (memoryIds.length === 0) return;
     const schema = this.config.schema || 'memory';

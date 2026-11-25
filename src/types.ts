@@ -396,3 +396,13 @@ export interface OptimizationResult {
   /** Total execution time in milliseconds */
   durationMs: number;
 }
+
+
+/** Bounds and ranks a graph hop before transferring edges from storage. */
+export interface MemoryPathEdgeScan {
+  entityId: string;
+  frontier: { node_id: string; strength: number; visited: string[] }[];
+  statuses: readonly string[];
+  decayLambda: number;
+  limit: number;
+}

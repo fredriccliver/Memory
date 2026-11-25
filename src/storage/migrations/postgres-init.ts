@@ -1,3 +1,4 @@
+import { memoryWorkUsageSchemaFor } from '../../memory/memory-use';
 /**
  * PostgreSQL Database Initialization
  *
@@ -12,7 +13,7 @@ import type { PostgresStorageConfig } from '../storage-types';
  * Current memory schema version. Bump when ensureTablesExist DDL changes so
  * booted processes re-run the (idempotent) DDL exactly once per version.
  */
-export const MEMORY_SCHEMA_VERSION = 3;
+export const MEMORY_SCHEMA_VERSION = 4;
 
 /**
  * Initializes the PostgreSQL connection pool
@@ -459,6 +460,8 @@ async function ensureTablesExistInner(client: any, schema: string): Promise<void
     CREATE INDEX IF NOT EXISTS idx_retrieval_shadow_log_created_at
     ON ${schema}.retrieval_shadow_log(created_at)
   `);
+
+  await client.query(memoryWorkUsageSchemaFor(schema));
 
   // Single-row schema version for the boot DDL gate.
   await client.query(`
