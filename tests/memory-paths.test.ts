@@ -6,10 +6,12 @@ import { issueMemoryUseReceipt, recordMemoryUse } from '../src/memory/memory-use
 import { normalizeMemoryTuning } from '../src/tuning';
 
 const entityId = 'graph:workspace';
-const nodes = ['a', 'b', 'c'].map(id => ({ id, entityId, embedding: [1, 0], similarity: 1 }));
+const nodes = ['a', 'b', 'c', 'hidden', 'behind'].map(id => ({ id, entityId, embedding: [1, 0], similarity: 1, status: id === 'hidden' ? 'archived' : 'active' }));
 const edges = [
   { id: 'ab', entityId, fromId: 'b', toId: 'a', strength: 0.8 },
   { id: 'bc', entityId, fromId: 'b', toId: 'c', strength: 0.75 },
+  { id: 'hidden-link', entityId, fromId: 'a', toId: 'hidden', strength: 0.99 },
+  { id: 'behind-link', entityId, fromId: 'hidden', toId: 'behind', strength: 0.99 },
   { id: 'foreign', entityId: 'another', fromId: 'a', toId: 'c', strength: 1 },
 ];
 const requested: number[] = [];
@@ -31,6 +33,9 @@ test('topK is independent of output limit and traversal is undirected and store-
   const traversal = await traverseMemory(store, entityId, 'a', { hops: 2, limit: 1 });
   assert.deepEqual(traversal.paths.map(path => path.edgeIds), [['ab']]);
   assert.equal(traversal.truncated, true);
+  assert.deepEqual((await traverseMemory(store, entityId, 'a', { hops: 4 })).paths.map(path => path.memoryId), ['b','c']);
+  const allSeeds = await runRankedRetrieval(store, entityId, 'a', normalizeMemoryTuning(), 5, {topK:5,hops:0});
+  assert.ok(!allSeeds.memories.some(memory => memory.id === 'hidden'));
   assert.equal((await traverseMemory(store, 'another', 'a')).paths.length, 0);
 });
 

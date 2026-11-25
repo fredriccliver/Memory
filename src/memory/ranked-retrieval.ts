@@ -26,7 +26,7 @@
 import type { MemoryStorage } from './storage';
 import type { Memory } from '../types';
 import type { MemoryTuning } from '../tuning';
-import { effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
+import { canReadMemory, effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
 export { effectiveStrength } from './memory-paths';
 
 /** Recency scale: score halves roughly every RECENCY_SCALE_DAYS days */
@@ -103,7 +103,7 @@ export async function runRankedRetrieval(
     entityId,
     options.topK === undefined ? limit : Math.max(1, Math.min(50, Math.floor(options.topK) || 1)),
   );
-  const seeds = matches;
+  const seeds = matches.filter(memory => canReadMemory(memory, entityId));
   if (seeds.length === 0) {
     return { memories: [], contributingEdgeIds: [] };
   }
@@ -116,7 +116,7 @@ export async function runRankedRetrieval(
   });
   const { paths, truncated } = expansion;
   const neighbors = (await storage.getMemoriesByIds(paths.filter(path => path.edgeIds.length && !seedSim.has(path.memoryId))
-    .map(path => path.memoryId))).filter(memory => memory.entityId === entityId);
+    .map(path => path.memoryId))).filter(memory => canReadMemory(memory, entityId));
   const pathByMemory = new Map(paths.map(path => [path.memoryId, path]));
   const bestEdgeForNode = expansion.activations;
 

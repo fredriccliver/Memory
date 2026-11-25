@@ -12,6 +12,10 @@ export type MemoryPathStorage = Pick<MemoryStorage, 'getEdgesTouching' | 'getMem
 export const MAX_MEMORY_HOPS = 4;
 export const MAX_EXPANDED_MEMORIES = 200;
 
+export function canReadMemory(memory: Memory, entityId: string) {
+  return memory.entityId === entityId && (memory.status === undefined || memory.status === 'active' || memory.status === 'demoted');
+}
+
 function daysSince(date: Date | string | null | undefined): number {
   if (!date) return Number.POSITIVE_INFINITY;
   const time = typeof date === 'string' ? Date.parse(date) : date.getTime();
@@ -78,9 +82,14 @@ export async function expandMemoryPaths(
         if (!previous || byStrength(path, previous) < 0) next.set(to, path);
       }
     }
-    const candidates = [...next.values()].sort(byStrength);
+    const ranked = [...next.values()].sort(byStrength);
+    const candidates = ranked.slice(0, MAX_EXPANDED_MEMORIES + seeds.size);
+    truncated ||= candidates.length < ranked.length;
+    const valid = new Set((await storage.getMemoriesByIds(candidates.map(path => path.memoryId)))
+      .filter(memory => canReadMemory(memory, entityId)).map(memory => memory.id));
     frontier = [];
     for (const path of candidates) {
+      if (!valid.has(path.memoryId)) continue;
       const previous = paths.get(path.memoryId);
       if (!previous && paths.size >= MAX_EXPANDED_MEMORIES + seeds.size) {
         truncated = true;
@@ -104,11 +113,11 @@ export async function traverseMemory(
   { hops = 1, limit = 20, decayLambda = 0 }: { hops?: number; limit?: number; decayLambda?: number } = {},
 ): Promise<{ memories: Memory[]; paths: MemoryPath[]; edges: MemoryEdge[]; truncated: boolean }> {
   const [anchor] = await storage.getMemoriesByIds([memoryId]);
-  if (!anchor || anchor.entityId !== entityId) return { memories: [], paths: [], edges: [], truncated: false };
+  if (!anchor || !canReadMemory(anchor, entityId)) return { memories: [], paths: [], edges: [], truncated: false };
   const expanded = await expandMemoryPaths(storage, entityId, new Map([[memoryId, 1]]), { hops, decayLambda });
   const paths = expanded.paths.filter(path => path.edgeIds.length).sort(byStrength);
   const results = await storage.getMemoriesByIds(paths.map(path => path.memoryId));
-  const byId = new Map(results.filter(memory => memory.entityId === entityId).map(memory => [memory.id, memory]));
+  const byId = new Map(results.filter(memory => canReadMemory(memory, entityId)).map(memory => [memory.id, memory]));
   const valid = paths.filter(path => byId.has(path.memoryId));
   const returned = valid.slice(0, Math.max(1, Math.min(50, Math.floor(limit) || 1)));
   return {
