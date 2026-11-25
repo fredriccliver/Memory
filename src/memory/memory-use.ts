@@ -164,7 +164,7 @@ export async function recordMemoryUse(
       await db.query(
         `update ${schema}.memories set outgoing_edges=array_remove(outgoing_edges,$3::uuid)
          where entity_id=$1 and id=$2 and not exists(
-           select 1 from ${schema}.edges where entity_id=$1 and from_id=$2 and to_id=$3
+           select 1 from ${schema}.edges where entity_id=$1 and from_id=$2 and to_id=$3 and type='related'
          )`,
         [scope.entityId, from_id, to_id],
       );

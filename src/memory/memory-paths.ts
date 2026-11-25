@@ -11,6 +11,7 @@ export interface MemoryPath {
 export type MemoryPathStorage = Pick<MemoryStorage, 'getEdgesTouching' | 'getMemoriesByIds'>;
 export const MAX_MEMORY_HOPS = 4;
 export const MAX_EXPANDED_MEMORIES = 200;
+const MAX_EDGES_PER_HOP = 2_000;
 
 export const rankedMemoryStatuses = ['active'];
 
@@ -64,12 +65,14 @@ export async function expandMemoryPaths(
   // Keep the ranker's existing edge activation, even when the target is also a direct seed.
   const activations = new Map<string, MemoryPath>();
   const encountered = new Map<string, MemoryEdge>();
+  const memoriesById = new Map<string, Memory>();
   let truncated = false;
   for (let hop = 0; hop < depth && frontier.length; hop++) {
     const byId = new Map(frontier.map(path => [path.memoryId, path]));
-    const edges = await storage.getEdgesTouching([...byId.keys()]);
+    const edges = await storage.getEdgesTouching([...byId.keys()], MAX_EDGES_PER_HOP + 1, entityId);
+    truncated ||= edges.length > MAX_EDGES_PER_HOP;
     const next = new Map<string, MemoryPath>();
-    for (const edge of edges) {
+    for (const edge of edges.slice(0, MAX_EDGES_PER_HOP)) {
       if (edge.entityId !== entityId) continue;
       encountered.set(edge.id, edge);
       for (const [from, to] of [[edge.fromId, edge.toId], [edge.toId, edge.fromId]]) {
@@ -91,9 +94,12 @@ export async function expandMemoryPaths(
     const scanLimit = Math.min(ranked.length, capacity * 4);
     for (let offset = 0; offset < scanLimit && candidates.length <= capacity; offset += capacity) {
       const batch = ranked.slice(offset, offset + capacity);
-      const valid = new Set((await storage.getMemoriesByIds(batch.map(path => path.memoryId)))
-        .filter(memory => canReadMemory(memory, entityId)).map(memory => memory.id));
-      candidates.push(...batch.filter(path => valid.has(path.memoryId)));
+      const unknownIds = batch.map(path => path.memoryId).filter(id => !memoriesById.has(id));
+      if (unknownIds.length) {
+        for (const memory of await storage.getMemoriesByIds(unknownIds))
+          if (canReadMemory(memory, entityId)) memoriesById.set(memory.id, memory);
+      }
+      candidates.push(...batch.filter(path => memoriesById.has(path.memoryId)));
     }
     truncated ||= candidates.length > capacity || scanLimit < ranked.length;
     frontier = [];
@@ -113,7 +119,7 @@ export async function expandMemoryPaths(
       }
     }
   }
-  return { paths: [...paths.values()], activations, encountered, truncated };
+  return { paths: [...paths.values()], activations, encountered, memoriesById, truncated };
 }
 
 /** Inspect an existing memory's neighborhood without recording retrieval or changing strength. */
@@ -127,14 +133,11 @@ export async function traverseMemory(
   if (!anchor || !canReadMemory(anchor, entityId)) return { memories: [], paths: [], edges: [], truncated: false };
   const expanded = await expandMemoryPaths(storage, entityId, new Map([[memoryId, 1]]), { hops, decayLambda });
   const paths = expanded.paths.filter(path => path.edgeIds.length).sort(byStrength);
-  const results = await storage.getMemoriesByIds(paths.map(path => path.memoryId));
-  const byId = new Map(results.filter(memory => canReadMemory(memory, entityId)).map(memory => [memory.id, memory]));
-  const valid = paths.filter(path => byId.has(path.memoryId));
-  const returned = valid.slice(0, Math.max(1, Math.min(50, Math.floor(limit) || 1)));
+  const returned = paths.slice(0, Math.max(1, Math.min(50, Math.floor(limit) || 1)));
   return {
-    memories: returned.map(path => byId.get(path.memoryId)!),
+    memories: returned.map(path => expanded.memoriesById.get(path.memoryId)!),
     paths: returned,
     edges: [...new Set(returned.flatMap(path => path.edgeIds))].map(id => expanded.encountered.get(id)!),
-    truncated: expanded.truncated || valid.length > returned.length,
+    truncated: expanded.truncated || paths.length > returned.length,
   };
 }

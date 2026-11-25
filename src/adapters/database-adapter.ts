@@ -225,7 +225,7 @@ export interface MemoryStorageAdapter {
    * @param memoryIds - Memory UUIDs
    * @returns Edges where from_id or to_id is one of the given ids
    */
-  getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]>;
+  getEdgesTouching(memoryIds: string[], limit?: number, entityId?: string): Promise<MemoryEdge[]>;
 
   /**
    * Record that memories were retrieved (usage signal)

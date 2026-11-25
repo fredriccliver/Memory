@@ -91,7 +91,7 @@ export async function ensureTablesExist(pool: any, schema: string = 'memory'): P
     await client.query('SELECT pg_advisory_lock($1)', [MEMORY_DDL_LOCK_KEY]);
     try {
       const current = await readSchemaVersion(client, schema);
-      if (current === MEMORY_SCHEMA_VERSION) {
+      if (current !== null && current >= MEMORY_SCHEMA_VERSION) {
         return; // schema up to date — skip all DDL
       }
       await ensureTablesExistInner(client, schema);

@@ -406,8 +406,8 @@ export class MemoryStorage {
    *
    * @public
    */
-  async getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]> {
-    return this.adapter.getEdgesTouching(memoryIds);
+  async getEdgesTouching(memoryIds: string[], limit?: number, entityId?: string): Promise<MemoryEdge[]> {
+    return this.adapter.getEdgesTouching(memoryIds, limit, entityId);
   }
 
   /**

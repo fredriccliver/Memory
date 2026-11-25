@@ -38,6 +38,10 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
     }
     const receipt=(memoryId:string,nodeIds:string[],edgeIds:string[])=>issueMemoryUseReceipt(scope,{memoryId,nodeIds,edgeIds,strength:1});
     await client.query("update custom_memory.edges set strength_updated_at=now()-interval '800 days' where id=$1",[ids.af]);
+    const supersedes = await client.query(
+      "insert into custom_memory.edges(entity_id,from_id,to_id,type,origin,strength) values($1,$2,$3,'supersedes','sleep',0.8) returning id",
+      [entityId,a,e],
+    );
     const used=receipt(c,[a,b,c],[ids.ab,ids.bc]);
     const noise=receipt(d,[a,d],[ids.ad]);
     const obsolete=receipt(e,[a,e],[ids.ae]);
@@ -57,6 +61,7 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
     assert.equal(after.rows.find(row=>row.id===ids.ad).strength,0.35);
     assert.ok(after.rows.some(row=>row.from_id===a&&row.to_id===c&&row.strength===0.6));
     assert.equal(after.rows.some(row=>row.id===ids.ae),false);
+    assert.ok(after.rows.some(row=>row.id===supersedes.rows[0].id));
     assert.equal(after.rows.find(row=>row.id===ids.af).strength,0.8);
     const { rows: nodesAfter }=await client.query('select * from custom_memory.memories order by id');
     assert.deepEqual(nodesAfter[0].outgoing_edges,[b,d,f,c]);
