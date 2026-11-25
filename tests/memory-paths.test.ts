@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runRankedRetrieval } from '../src/memory/ranked-retrieval';
-import { traverseMemory } from '../src/memory/memory-paths';
+import { expandMemoryPaths, traverseMemory } from '../src/memory/memory-paths';
 import { issueMemoryUseReceipt, recordMemoryUse } from '../src/memory/memory-use';
 import { normalizeMemoryTuning } from '../src/tuning';
 
@@ -39,6 +39,30 @@ test('topK is independent of output limit and traversal is undirected and store-
   assert.equal((await traverseMemory(store, 'another', 'a')).paths.length, 0);
 });
 
+test('a stronger path can pass through a direct seed', async () => {
+  const result = await expandMemoryPaths(store, entityId, new Map([['a', 1], ['b', 0.1]]), { hops: 2, decayLambda: 0 });
+  assert.deepEqual(result.paths.find(path => path.memoryId === 'b')?.edgeIds, []);
+  assert.deepEqual(result.paths.find(path => path.memoryId === 'c')?.edgeIds, ['ab', 'bc']);
+});
+
+test('unreadable paths do not consume the active traversal budget', async () => {
+  const hidden = Array.from({ length: 210 }, (_, index) => ({
+    id: 'archived-' + index, entityId, status: 'archived',
+  }));
+  const hiddenEdges = hidden.map(({ id }) => ({ id, entityId, fromId: 'a', toId: id, strength: 0.99 }));
+  const fixture = {
+    async getMemoriesByIds(ids: string[]) {
+      return [...hidden, ...nodes].filter(node => ids.includes(node.id));
+    },
+    async getEdgesTouching(ids: string[]) {
+      return [...hiddenEdges, edges[0]].filter(edge => ids.includes(edge.fromId) || ids.includes(edge.toId));
+    },
+  } as unknown as Parameters<typeof traverseMemory>[0];
+  const result = await traverseMemory(fixture, entityId, 'a');
+  assert.deepEqual(result.paths.map(path => path.memoryId), ['b']);
+  assert.equal(result.truncated, false);
+});
+
 test('confirmed use is actor-scoped, ignores a redundant path, and is idempotent per work', async () => {
   const writes: unknown[][] = [];
   let inserted = false;
@@ -61,9 +85,13 @@ test('confirmed use is actor-scoped, ignores a redundant path, and is idempotent
     output: 'Applied the deployment procedure in the runbook.',
   }));
   await assert.rejects(recordMemoryUse(db, {...scope,actorId:'another'}, 'task', uses), /Invalid memory use receipt/);
+  await assert.rejects(recordMemoryUse(db, {...scope,schema:'another'}, 'task', uses), /Invalid memory use receipt/);
+  await assert.rejects(recordMemoryUse(db,scope,'task',uses,[
+    {action:'typo',receipt:uses[0].receipt,edgeId:'ab'} as unknown as NonNullable<Parameters<typeof recordMemoryUse>[4]>[number],
+  ]), /Invalid memory link action/);
   assert.equal(writes.length,0);
   assert.deepEqual(await recordMemoryUse(db,scope,'task',uses), {alreadyRecorded:false,memories:1,reinforced:0});
-  assert.deepEqual(await recordMemoryUse(db,scope,'task',uses), {alreadyRecorded:true,memories:0,reinforced:0});
+  assert.deepEqual(await recordMemoryUse(db,scope,'task',uses), {alreadyRecorded:true,memories:0,reinforced:0,shortcuts:0,weakened:0,unlinked:0});
   const linked = await traverseMemory(store, entityId, 'a', { hops: 2 });
   const linkedUse = [{receipt:issueMemoryUseReceipt(scope,linked.paths[1]),output:'Used the linked procedure.'}];
   inserted=false;
