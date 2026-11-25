@@ -74,3 +74,8 @@ export * from './vector/openai-adapter';
 
 // Tools
 export * from './tools';
+
+export { traverseMemory, MAX_MEMORY_HOPS } from './memory/memory-paths';
+export type { MemoryPath, MemoryPathStorage } from './memory/memory-paths';
+export { issueMemoryUseReceipt, memoryWorkUsageSchema, recordMemoryUse } from './memory/memory-use';
+export type { MemoryLinkChange } from './memory/memory-use';

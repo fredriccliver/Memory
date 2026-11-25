@@ -1,7 +1,7 @@
 /**
  * Ranked Retrieval
  *
- * Usage-carved retrieval path: vector top-k seeds + edge-weighted 1-hop
+ * Usage-carved retrieval path: vector top-k seeds + edge-weighted bounded
  * expansion + scored ranking. Replaces the legacy fixed-threshold search and
  * unbounded array-graph traversal.
  *
@@ -14,17 +14,31 @@
  * - recency: exp(-daysSinceLastRetrieval / 30)
  * - nodeStrength: stored strength with lazy exponential decay (decayLambda)
  *
+ * A demoted node (status 'demoted') stays a candidate; its score is multiplied
+ * by DEMOTED_SCORE_FACTOR. Demotion is a ranking penalty, never an exclusion,
+ * so a topic that returns can still surface and lift the demotion.
+ *
  * This module is side-effect free — usage recording (node retrievals, edge
  * bumps) is the caller's responsibility so the shadow path can reuse it
  * without polluting usage signals.
  */
 
 import type { MemoryStorage } from './storage';
-import type { Memory, MemoryEdge } from '../types';
+import type { Memory } from '../types';
 import type { MemoryTuning } from '../tuning';
+import { effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
+export { effectiveStrength } from './memory-paths';
 
 /** Recency scale: score halves roughly every RECENCY_SCALE_DAYS days */
 const RECENCY_SCALE_DAYS = 30;
+
+/**
+ * Score multiplier for demoted nodes. Demotion is soft: the node remains a
+ * retrieval candidate at a reduced rank and returns to `active` on a re-mention.
+ *
+ * @public
+ */
+export const DEMOTED_SCORE_FACTOR = 0.5;
 
 /**
  * Result of a ranked retrieval run
@@ -36,6 +50,8 @@ export interface RankedRetrievalResult {
   memories: Memory[];
   /** Edges whose activation contributed to a returned memory (usage-bump targets) */
   contributingEdgeIds: string[];
+  paths?: MemoryPath[];
+  truncated?: boolean;
 }
 
 function daysSince(date: Date | string | null | undefined): number {
@@ -43,26 +59,6 @@ function daysSince(date: Date | string | null | undefined): number {
   const t = typeof date === 'string' ? new Date(date).getTime() : date.getTime();
   if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
   return Math.max(0, (Date.now() - t) / 86_400_000);
-}
-
-/**
- * Effective strength with lazy exponential decay.
- *
- * Decay is computed at read time from the stored strength and its update
- * timestamp — no batch decay job exists anywhere. lambda = 0 disables decay.
- *
- * @public
- */
-export function effectiveStrength(
-  strength: number | undefined,
-  updatedAt: Date | string | null | undefined,
-  lambda: number,
-): number {
-  const base = strength ?? 0.5;
-  if (lambda <= 0) return base;
-  const age = daysSince(updatedAt);
-  if (!Number.isFinite(age)) return base;
-  return base * Math.exp(-lambda * age);
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -89,6 +85,7 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
  * @param query - Query text
  * @param tuning - Normalized tuning (weights, decayLambda)
  * @param limit - Maximum memories to return
+ * @param options - Independent vector seed count and graph depth
  *
  * @public
  */
@@ -98,52 +95,30 @@ export async function runRankedRetrieval(
   query: string,
   tuning: MemoryTuning,
   limit: number,
+  options: { topK?: number; hops?: number } = {},
 ): Promise<RankedRetrievalResult> {
   // 1. Vector top-k seeds — rank-based, no similarity threshold
   const { embedding: queryEmbedding, matches } = await storage.findMostSimilarMemories(
     query,
     entityId,
-    limit,
+    options.topK === undefined ? limit : Math.max(1, Math.min(50, Math.floor(options.topK) || 1)),
   );
-  const isActive = (m: Memory) => (m.status ?? 'active') === 'active';
-  const seeds = matches.filter(isActive);
+  const seeds = matches;
   if (seeds.length === 0) {
     return { memories: [], contributingEdgeIds: [] };
   }
 
   const seedSim = new Map<string, number>(seeds.map(s => [s.id, clamp01(s.similarity ?? 0)]));
 
-  // 2. One-hop expansion over first-class edges (undirected: either end)
-  const edges = await storage.getEdgesTouching(seeds.map(s => s.id));
-  const neighborIds = new Set<string>();
-  for (const edge of edges) {
-    if (edge.entityId !== entityId) continue;
-    for (const nodeId of [edge.fromId, edge.toId]) {
-      if (!seedSim.has(nodeId)) neighborIds.add(nodeId);
-    }
-  }
-  const neighbors =
-    neighborIds.size > 0
-      ? (await storage.getMemoriesByIds([...neighborIds])).filter(isActive)
-      : [];
-
-  // 3. Edge activation per candidate: max over incident edges of
-  //    effectiveEdgeStrength × similarity of the seed on the other end
-  const bestEdgeForNode = new Map<string, { edgeId: string; term: number }>();
-  const considerEdge = (edge: MemoryEdge, seedId: string, nodeId: string) => {
-    const sim = seedSim.get(seedId);
-    if (sim === undefined) return;
-    const term = effectiveStrength(edge.strength, edge.strengthUpdatedAt, tuning.decayLambda) * sim;
-    const current = bestEdgeForNode.get(nodeId);
-    if (!current || term > current.term) {
-      bestEdgeForNode.set(nodeId, { edgeId: edge.id, term });
-    }
-  };
-  for (const edge of edges) {
-    if (edge.entityId !== entityId) continue;
-    considerEdge(edge, edge.fromId, edge.toId);
-    considerEdge(edge, edge.toId, edge.fromId);
-  }
+  const expansion = await expandMemoryPaths(storage, entityId, seedSim, {
+    hops: options.hops ?? 1,
+    decayLambda: tuning.decayLambda,
+  });
+  const { paths, truncated } = expansion;
+  const neighbors = (await storage.getMemoriesByIds(paths.filter(path => path.edgeIds.length && !seedSim.has(path.memoryId))
+    .map(path => path.memoryId))).filter(memory => memory.entityId === entityId);
+  const pathByMemory = new Map(paths.map(path => [path.memoryId, path]));
+  const bestEdgeForNode = expansion.activations;
 
   // 4. Score all candidates
   const candidates = [...seeds, ...neighbors];
@@ -153,7 +128,7 @@ export async function runRankedRetrieval(
       (memory.embedding && memory.embedding.length > 0
         ? clamp01(cosine(queryEmbedding, memory.embedding))
         : 0);
-    const edgeTerm = bestEdgeForNode.get(memory.id)?.term ?? 0;
+    const edgeTerm = bestEdgeForNode.get(memory.id)?.strength ?? 0;
     const recencyAnchor = memory.lastRetrievedAt ?? memory.createdAt;
     const recency = Number.isFinite(daysSince(recencyAnchor))
       ? Math.exp(-daysSince(recencyAnchor) / RECENCY_SCALE_DAYS)
@@ -163,11 +138,13 @@ export async function runRankedRetrieval(
       memory.strengthUpdatedAt,
       tuning.decayLambda,
     );
+    const demotion = (memory.status ?? 'active') === 'demoted' ? DEMOTED_SCORE_FACTOR : 1;
     const score =
-      tuning.rankWeightSimilarity * similarity +
-      tuning.rankWeightEdge * edgeTerm +
-      tuning.rankWeightRecency * recency +
-      tuning.rankWeightStrength * nodeStrength;
+      demotion *
+      (tuning.rankWeightSimilarity * similarity +
+        tuning.rankWeightEdge * edgeTerm +
+        tuning.rankWeightRecency * recency +
+        tuning.rankWeightStrength * nodeStrength);
     return { memory: { ...memory, similarity }, score };
   });
 
@@ -175,10 +152,15 @@ export async function runRankedRetrieval(
   const top = scored.slice(0, limit);
 
   const returnedIds = new Set(top.map(s => s.memory.id));
-  const contributingEdgeIds: string[] = [];
+  const contributingEdgeIds = new Set<string>();
   for (const [nodeId, best] of bestEdgeForNode) {
-    if (returnedIds.has(nodeId)) contributingEdgeIds.push(best.edgeId);
+    if (returnedIds.has(nodeId)) for (const edgeId of best.edgeIds) contributingEdgeIds.add(edgeId);
   }
 
-  return { memories: top.map(s => s.memory), contributingEdgeIds };
+  return {
+    memories: top.map(s => s.memory),
+    contributingEdgeIds: [...contributingEdgeIds],
+    paths: top.map(({ memory }) => pathByMemory.get(memory.id)!).filter(Boolean),
+    truncated: truncated || scored.length > limit,
+  };
 }
