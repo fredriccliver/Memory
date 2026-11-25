@@ -14,9 +14,7 @@
  * - recency: exp(-daysSinceLastRetrieval / 30)
  * - nodeStrength: stored strength with lazy exponential decay (decayLambda)
  *
- * A demoted node (status 'demoted') stays a candidate; its score is multiplied
- * by DEMOTED_SCORE_FACTOR. Demotion is a ranking penalty, never an exclusion,
- * so a topic that returns can still surface and lift the demotion.
+ * This compatibility branch preserves its existing active-only recall behavior.
  *
  * This module is side-effect free — usage recording (node retrievals, edge
  * bumps) is the caller's responsibility so the shadow path can reuse it
@@ -26,19 +24,11 @@
 import type { MemoryStorage } from './storage';
 import type { Memory } from '../types';
 import type { MemoryTuning } from '../tuning';
-import { effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
+import { canReadMemory, effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
 export { effectiveStrength } from './memory-paths';
 
 /** Recency scale: score halves roughly every RECENCY_SCALE_DAYS days */
 const RECENCY_SCALE_DAYS = 30;
-
-/**
- * Score multiplier for demoted nodes. Demotion is soft: the node remains a
- * retrieval candidate at a reduced rank and returns to `active` on a re-mention.
- *
- * @public
- */
-export const DEMOTED_SCORE_FACTOR = 0.5;
 
 /**
  * Result of a ranked retrieval run
@@ -103,7 +93,7 @@ export async function runRankedRetrieval(
     entityId,
     options.topK === undefined ? limit : Math.max(1, Math.min(50, Math.floor(options.topK) || 1)),
   );
-  const seeds = matches;
+  const seeds = matches.filter(memory => canReadMemory(memory, entityId));
   if (seeds.length === 0) {
     return { memories: [], contributingEdgeIds: [] };
   }
@@ -116,7 +106,7 @@ export async function runRankedRetrieval(
   });
   const { paths, truncated } = expansion;
   const neighbors = (await storage.getMemoriesByIds(paths.filter(path => path.edgeIds.length && !seedSim.has(path.memoryId))
-    .map(path => path.memoryId))).filter(memory => memory.entityId === entityId);
+    .map(path => path.memoryId))).filter(memory => canReadMemory(memory, entityId));
   const pathByMemory = new Map(paths.map(path => [path.memoryId, path]));
   const bestEdgeForNode = expansion.activations;
 
@@ -138,13 +128,11 @@ export async function runRankedRetrieval(
       memory.strengthUpdatedAt,
       tuning.decayLambda,
     );
-    const demotion = (memory.status ?? 'active') === 'demoted' ? DEMOTED_SCORE_FACTOR : 1;
     const score =
-      demotion *
-      (tuning.rankWeightSimilarity * similarity +
+      tuning.rankWeightSimilarity * similarity +
         tuning.rankWeightEdge * edgeTerm +
         tuning.rankWeightRecency * recency +
-        tuning.rankWeightStrength * nodeStrength);
+        tuning.rankWeightStrength * nodeStrength;
     return { memory: { ...memory, similarity }, score };
   });
 
