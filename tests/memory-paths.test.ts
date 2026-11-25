@@ -18,9 +18,10 @@ const requested: number[] = [];
 const store = {
   async getMemoriesByIds(ids: string[]) { return nodes.filter(node => ids.includes(node.id)); },
   async getEdgesTouching(ids: string[]) { return edges.filter(edge => ids.includes(edge.fromId) || ids.includes(edge.toId)); },
-  async findMostSimilarMemories(_query: string, _store: string, k: number) {
+  async findMostSimilarMemories(_query: string, _store: string, k: number, statuses: string[]) {
     requested.push(k);
-    return { embedding: [1, 0], matches: nodes.slice(0, k) };
+    const ranked = [nodes[3], ...nodes.slice(0, 3), nodes[4]];
+    return { embedding: [1, 0], matches: ranked.filter(node => statuses.includes(node.status)).slice(0, k) };
   },
 } as unknown as Parameters<typeof runRankedRetrieval>[0];
 
@@ -61,6 +62,23 @@ test('unreadable paths do not consume the active traversal budget', async () => 
   const result = await traverseMemory(fixture, entityId, 'a');
   assert.deepEqual(result.paths.map(path => path.memoryId), ['b']);
   assert.equal(result.truncated, false);
+  const crowded = Array.from({ length: 1_000 }, (_, index) => ({
+    id: 'crowded-' + index, entityId, status: 'archived',
+  }));
+  let lookedUp = 0;
+  const crowdedStore = {
+    async getMemoriesByIds(ids: string[]) {
+      lookedUp += ids.length;
+      return [...crowded, ...nodes].filter(node => ids.includes(node.id));
+    },
+    async getEdgesTouching() {
+      return [...crowded.map(({ id }) => ({ id, entityId, fromId: 'a', toId: id, strength: 0.99 })), edges[0]];
+    },
+  } as unknown as Parameters<typeof traverseMemory>[0];
+  const bounded = await traverseMemory(crowdedStore, entityId, 'a');
+  assert.equal(bounded.truncated, true);
+  assert.ok(lookedUp < crowded.length);
+
 });
 
 test('confirmed use is actor-scoped, ignores a redundant path, and is idempotent per work', async () => {
@@ -89,6 +107,17 @@ test('confirmed use is actor-scoped, ignores a redundant path, and is idempotent
   await assert.rejects(recordMemoryUse(db,scope,'task',uses,[
     {action:'typo',receipt:uses[0].receipt,edgeId:'ab'} as unknown as NonNullable<Parameters<typeof recordMemoryUse>[4]>[number],
   ]), /Invalid memory link action/);
+  const sign = (memoryId: string, nodeIds: string[], edgeIds: string[]) =>
+    issueMemoryUseReceipt(scope, { memoryId, nodeIds, edgeIds, strength: 1 });
+  const discarded = sign('c', ['a', 'b', 'c'], ['ab', 'bc']);
+  await assert.rejects(recordMemoryUse(db, scope, 'task', [
+    discarded,
+    sign('c', ['c'], []),
+    sign('b', ['a', 'b'], ['ab']),
+    sign('a', ['c', 'b', 'a'], ['bc', 'ab']),
+  ].map(receipt => ({ receipt, output: 'Applied in the deployment procedure.' })), [
+    { action: 'shortcut', receipt: discarded },
+  ]), /contributing multi-hop path/);
   assert.equal(writes.length,0);
   assert.deepEqual(await recordMemoryUse(db,scope,'task',uses), {alreadyRecorded:false,memories:1,reinforced:0});
   assert.deepEqual(await recordMemoryUse(db,scope,'task',uses), {alreadyRecorded:true,memories:0,reinforced:0,shortcuts:0,weakened:0,unlinked:0});

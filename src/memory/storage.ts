@@ -332,6 +332,7 @@ export class MemoryStorage {
     content: string,
     entityId: string,
     k: number,
+    statuses?: readonly string[],
   ): Promise<{ embedding: number[]; matches: Memory[] }> {
     if (!this.embeddingService) {
       throw new Error(
@@ -339,7 +340,7 @@ export class MemoryStorage {
       );
     }
     const embedding = await this.embeddingService.generateEmbedding(content);
-    const matches = await this.adapter.searchByVector(embedding, entityId, k, 0);
+    const matches = await this.adapter.searchByVector(embedding, entityId, k, 0, statuses);
     return { embedding, matches };
   }
 
