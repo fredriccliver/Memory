@@ -116,8 +116,8 @@ export async function runRankedRetrieval(
     decayLambda: tuning.decayLambda,
   });
   const { paths, truncated } = expansion;
-  const neighbors = (await storage.getMemoriesByIds(paths.filter(path => path.edgeIds.length && !seedSim.has(path.memoryId))
-    .map(path => path.memoryId))).filter(memory => canReadMemory(memory, entityId));
+  const neighbors = paths.filter(path => path.edgeIds.length)
+    .map(path => expansion.memoriesById.get(path.memoryId)!);
   const pathByMemory = new Map(paths.map(path => [path.memoryId, path]));
   const bestEdgeForNode = expansion.activations;
 

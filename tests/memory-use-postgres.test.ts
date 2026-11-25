@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Client } from 'pg';
+import { Client, Pool } from 'pg';
+import { ensureTablesExist } from '../src/storage/migrations/postgres-init';
 import { issueMemoryUseReceipt, memoryWorkUsageSchemaFor, recordMemoryUse } from '../src/memory/memory-use';
 
 test('work use reinforces a path and applies a shortcut, weakening and unlink in PostgreSQL', {
@@ -38,6 +39,10 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
     }
     const receipt=(memoryId:string,nodeIds:string[],edgeIds:string[])=>issueMemoryUseReceipt(scope,{memoryId,nodeIds,edgeIds,strength:1});
     await client.query("update custom_memory.edges set strength_updated_at=now()-interval '800 days' where id=$1",[ids.af]);
+    const supersedes = await client.query(
+      "insert into custom_memory.edges(entity_id,from_id,to_id,type,origin,strength) values($1,$2,$3,'supersedes','sleep',0.8) returning id",
+      [entityId,a,e],
+    );
     const used=receipt(c,[a,b,c],[ids.ab,ids.bc]);
     const noise=receipt(d,[a,d],[ids.ad]);
     const obsolete=receipt(e,[a,e],[ids.ae]);
@@ -57,6 +62,7 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
     assert.equal(after.rows.find(row=>row.id===ids.ad).strength,0.35);
     assert.ok(after.rows.some(row=>row.from_id===a&&row.to_id===c&&row.strength===0.6));
     assert.equal(after.rows.some(row=>row.id===ids.ae),false);
+    assert.ok(after.rows.some(row=>row.id===supersedes.rows[0].id));
     assert.equal(after.rows.find(row=>row.id===ids.af).strength,0.8);
     const { rows: nodesAfter }=await client.query('select * from custom_memory.memories order by id');
     assert.deepEqual(nodesAfter[0].outgoing_edges,[b,d,f,c]);
@@ -67,5 +73,23 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
   } finally {
     await client.query('rollback');
     await client.end();
+  }
+});
+
+
+test('normal setup provisions usage on fresh and v3 PostgreSQL schemas', {
+  skip: process.env.OAK_TEST_ISOLATED_PG !== '1',
+}, async () => {
+  const pool = new Pool();
+  try {
+    await ensureTablesExist(pool, 'fresh_usage');
+    assert.equal((await pool.query("select to_regclass('fresh_usage.work_usage') as name")).rows[0].name, 'fresh_usage.work_usage');
+    await pool.query('drop table fresh_usage.work_usage; update fresh_usage.schema_version set version = 3');
+    await ensureTablesExist(pool, 'fresh_usage');
+    assert.equal((await pool.query('select version from fresh_usage.schema_version')).rows[0].version, 4);
+    assert.equal((await pool.query("select to_regclass('fresh_usage.work_usage') as name")).rows[0].name, 'fresh_usage.work_usage');
+  } finally {
+    await pool.query('drop schema if exists fresh_usage cascade');
+    await pool.end();
   }
 });

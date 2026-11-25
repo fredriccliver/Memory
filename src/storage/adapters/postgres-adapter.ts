@@ -479,16 +479,19 @@ export class PostgresAdapter implements MemoryStorageAdapter {
   /**
    * Get all edges touching any of the given memories (either direction)
    */
-  async getEdgesTouching(memoryIds: string[]): Promise<MemoryEdge[]> {
+  async getEdgesTouching(memoryIds: string[], limit?: number, entityId?: string): Promise<MemoryEdge[]> {
     if (memoryIds.length === 0) return [];
     const schema = this.config.schema || 'memory';
     const result = await this.client.query(
       `
       SELECT id, entity_id, from_id, to_id, type, origin, strength, created_at, strength_updated_at
       FROM ${schema}.edges
-      WHERE from_id = ANY($1) OR to_id = ANY($1)
+      WHERE (from_id = ANY($1) OR to_id = ANY($1))
+        AND ($3::text IS NULL OR entity_id = $3)
+      ${limit === undefined ? '' : 'ORDER BY strength DESC, id'}
+      LIMIT $2
       `,
-      [memoryIds],
+      [memoryIds, limit ?? null, entityId ?? null],
     );
     return result.rows.map((row: any) => this.mapRowToEdge(row));
   }
