@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client, Pool } from 'pg';
+import { PostgresAdapter } from '../src/storage/adapters/postgres-adapter';
+import { StorageType } from '../src/storage/storage-types';
 import { ensureTablesExist } from '../src/storage/migrations/postgres-init';
 import { issueMemoryUseReceipt, memoryWorkUsageSchemaFor, recordMemoryUse } from '../src/memory/memory-use';
 
@@ -82,14 +84,49 @@ test('normal setup provisions usage on fresh and v3 PostgreSQL schemas', {
 }, async () => {
   const pool = new Pool();
   try {
-    await ensureTablesExist(pool, 'fresh_usage');
+    await ensureTablesExist(pool, 'Fresh_Usage');
     assert.equal((await pool.query("select to_regclass('fresh_usage.work_usage') as name")).rows[0].name, 'fresh_usage.work_usage');
     await pool.query('drop table fresh_usage.work_usage; update fresh_usage.schema_version set version = 3');
-    await ensureTablesExist(pool, 'fresh_usage');
+    await ensureTablesExist(pool, 'Fresh_Usage');
     assert.equal((await pool.query('select version from fresh_usage.schema_version')).rows[0].version, 4);
     assert.equal((await pool.query("select to_regclass('fresh_usage.work_usage') as name")).rows[0].name, 'fresh_usage.work_usage');
   } finally {
     await pool.query('drop schema if exists fresh_usage cascade');
+    await pool.end();
+  }
+});
+
+
+test('bounded PostgreSQL scans rank readable edges using decay before the cutoff', {
+  skip: process.env.OAK_TEST_ISOLATED_PG !== '1',
+}, async () => {
+  const schema = 'path_scan';
+  const entityId = 'graph:fixture';
+  const pool = new Pool();
+  const adapter = new PostgresAdapter({ type: StorageType.POSTGRES, connectionString: '', schema });
+  try {
+    await adapter.initialize();
+    const { rows } = await pool.query<{ id: string }>(`
+      insert into path_scan.memories(entity_id,content,status) values
+        ($1,'anchor','active'),($1,'old','active'),($1,'hidden','archived'),($1,'fresh','active')
+      returning id
+    `, [entityId]);
+    const [anchor, old, hidden, fresh] = rows.map(row => row.id);
+    await pool.query(`
+      insert into path_scan.edges(entity_id,from_id,to_id,origin,strength,strength_updated_at)
+      values ($1,$2,$3,'conversation',0.99,now()-interval '800 days'),($1,$2,$4,'conversation',0.98,now()),($1,$2,$5,'conversation',0.6,now())
+    `, [entityId,anchor,old,hidden,fresh]);
+    const edges = await adapter.getEdgesTouching([anchor], {
+      entityId,
+      frontier: [{ node_id: anchor, strength: 1, visited: [anchor] }],
+      statuses: ['active'],
+      decayLambda: 1,
+      limit: 1,
+    });
+    assert.deepEqual(edges.map(edge => edge.toId), [fresh]);
+  } finally {
+    await adapter.close();
+    await pool.query('drop schema if exists path_scan cascade');
     await pool.end();
   }
 });

@@ -12,8 +12,8 @@ export type MemoryLinkChange =
 const edgeBump = 0.05;
 
 function schemaIdentifier(schema: string) {
-  if (!/^[a-z_][a-z0-9_]*$/.test(schema)) throw new Error('Invalid memory schema');
-  return schema;
+  if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) throw new Error('Invalid memory schema');
+  return schema.toLowerCase();
 }
 
 export function memoryWorkUsageSchemaFor(schema: string) {
@@ -36,7 +36,7 @@ export const memoryWorkUsageSchema = memoryWorkUsageSchemaFor('memory');
 
 function sign(scope: Scope, payload: string) {
   return createHmac('sha256', scope.secret)
-    .update(JSON.stringify(['oak-memory-use-v1', scope.entityId, scope.actorId, scope.schema ?? 'memory', payload]))
+    .update(JSON.stringify(['oak-memory-use-v1', scope.entityId, scope.actorId, schemaIdentifier(scope.schema ?? 'memory'), payload]))
     .digest();
 }
 

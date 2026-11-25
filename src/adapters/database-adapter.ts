@@ -1,3 +1,4 @@
+import type { MemoryPathEdgeScan } from '../types';
 /**
  * Database Adapter Interface
  *
@@ -253,7 +254,7 @@ export interface MemoryStorageAdapter {
    * @param memoryIds - Memory UUIDs
    * @returns Edges where from_id or to_id is one of the given ids
    */
-  getEdgesTouching(memoryIds: string[], limit?: number, entityId?: string): Promise<MemoryEdge[]>;
+  getEdgesTouching(memoryIds: string[], scan?: MemoryPathEdgeScan): Promise<MemoryEdge[]>;
 
   /**
    * Record that memories were retrieved (usage signal)

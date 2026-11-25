@@ -69,7 +69,10 @@ export async function expandMemoryPaths(
   let truncated = false;
   for (let hop = 0; hop < depth && frontier.length; hop++) {
     const byId = new Map(frontier.map(path => [path.memoryId, path]));
-    const edges = await storage.getEdgesTouching([...byId.keys()], MAX_EDGES_PER_HOP + 1, entityId);
+    const edges = await storage.getEdgesTouching([...byId.keys()], {
+      frontier: frontier.map(path => ({ node_id: path.memoryId, strength: path.strength, visited: path.nodeIds })),
+      entityId, statuses: rankedMemoryStatuses, decayLambda, limit: MAX_EDGES_PER_HOP + 1,
+    });
     truncated ||= edges.length > MAX_EDGES_PER_HOP;
     const next = new Map<string, MemoryPath>();
     for (const edge of edges.slice(0, MAX_EDGES_PER_HOP)) {
@@ -118,6 +121,16 @@ export async function expandMemoryPaths(
         frontier.push(path);
       }
     }
+  }
+  if (depth > 1 && memoriesById.size) {
+    const retained = new Set([...paths.values()].flatMap(path => path.nodeIds));
+    for (const path of activations.values()) for (const id of path.nodeIds) retained.add(id);
+    const fresh = (await storage.getMemoriesByIds([...retained]))
+      .filter(memory => canReadMemory(memory, entityId));
+    const readable = new Set(fresh.map(memory => memory.id));
+    for (const memory of fresh) memoriesById.set(memory.id, memory);
+    for (const [id, path] of paths) if (path.nodeIds.some(node => !readable.has(node))) paths.delete(id);
+    for (const [id, path] of activations) if (path.nodeIds.some(node => !readable.has(node))) activations.delete(id);
   }
   return { paths: [...paths.values()], activations, encountered, memoriesById, truncated };
 }

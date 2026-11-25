@@ -122,7 +122,7 @@ export async function runRankedRetrieval(
   const bestEdgeForNode = expansion.activations;
 
   // 4. Score all candidates
-  const candidates = [...seeds, ...neighbors];
+  const candidates = [...seeds.filter(memory => pathByMemory.has(memory.id)), ...neighbors];
   const scored = candidates.map(memory => {
     const similarity =
       seedSim.get(memory.id) ??

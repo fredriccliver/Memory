@@ -1,3 +1,4 @@
+import type { MemoryPathEdgeScan } from '../types';
 /**
  * Memory Storage
  *
@@ -485,8 +486,8 @@ export class MemoryStorage {
    *
    * @public
    */
-  async getEdgesTouching(memoryIds: string[], limit?: number, entityId?: string): Promise<MemoryEdge[]> {
-    return this.adapter.getEdgesTouching(memoryIds, limit, entityId);
+  async getEdgesTouching(memoryIds: string[], scan?: MemoryPathEdgeScan): Promise<MemoryEdge[]> {
+    return this.adapter.getEdgesTouching(memoryIds, scan);
   }
 
   /**
