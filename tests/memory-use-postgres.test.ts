@@ -105,6 +105,7 @@ test('bounded PostgreSQL scans rank readable edges using decay before the cutoff
   const pool = new Pool();
   const adapter = new PostgresAdapter({ type: StorageType.POSTGRES, connectionString: '', schema });
   try {
+    await pool.query('create extension if not exists vector');
     await adapter.initialize();
     const { rows } = await pool.query<{ id: string }>(`
       insert into path_scan.memories(entity_id,content,status) values
