@@ -24,7 +24,7 @@
 import type { MemoryStorage } from './storage';
 import type { Memory } from '../types';
 import type { MemoryTuning } from '../tuning';
-import { canReadMemory, effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
+import { canReadMemory, rankedMemoryStatuses, effectiveStrength, expandMemoryPaths, type MemoryPath } from './memory-paths';
 export { effectiveStrength } from './memory-paths';
 
 /** Recency scale: score halves roughly every RECENCY_SCALE_DAYS days */
@@ -92,6 +92,7 @@ export async function runRankedRetrieval(
     query,
     entityId,
     options.topK === undefined ? limit : Math.max(1, Math.min(50, Math.floor(options.topK) || 1)),
+    rankedMemoryStatuses,
   );
   const seeds = matches.filter(memory => canReadMemory(memory, entityId));
   if (seeds.length === 0) {

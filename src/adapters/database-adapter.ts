@@ -79,6 +79,7 @@ export interface MemoryStorageAdapter {
     entityId: string,
     limit?: number,
     threshold?: number,
+    statuses?: readonly string[],
   ): Promise<Memory[]>;
 
   /**

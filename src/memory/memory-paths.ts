@@ -12,8 +12,10 @@ export type MemoryPathStorage = Pick<MemoryStorage, 'getEdgesTouching' | 'getMem
 export const MAX_MEMORY_HOPS = 4;
 export const MAX_EXPANDED_MEMORIES = 200;
 
+export const rankedMemoryStatuses = ['active'];
+
 export function canReadMemory(memory: Memory, entityId: string) {
-  return memory.entityId === entityId && ((memory.status ?? 'active') === 'active');
+  return memory.entityId === entityId && rankedMemoryStatuses.includes(memory.status ?? 'active');
 }
 
 function daysSince(date: Date | string | null | undefined): number {
@@ -86,13 +88,14 @@ export async function expandMemoryPaths(
     const ranked = [...next.values()].sort(byStrength);
     const candidates: MemoryPath[] = [];
     const capacity = MAX_EXPANDED_MEMORIES + seeds.size;
-    for (let offset = 0; offset < ranked.length && candidates.length <= capacity; offset += capacity) {
+    const scanLimit = Math.min(ranked.length, capacity * 4);
+    for (let offset = 0; offset < scanLimit && candidates.length <= capacity; offset += capacity) {
       const batch = ranked.slice(offset, offset + capacity);
       const valid = new Set((await storage.getMemoriesByIds(batch.map(path => path.memoryId)))
         .filter(memory => canReadMemory(memory, entityId)).map(memory => memory.id));
       candidates.push(...batch.filter(path => valid.has(path.memoryId)));
     }
-    truncated ||= candidates.length > capacity;
+    truncated ||= candidates.length > capacity || scanLimit < ranked.length;
     frontier = [];
     for (const path of candidates.slice(0, capacity)) {
       const previous = paths.get(path.memoryId);

@@ -185,6 +185,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     entityId: string,
     limit: number = 10,
     threshold: number = 0.7,
+    statuses?: readonly string[],
   ): Promise<Memory[]> {
     const schema = this.config.schema || 'memory';
     const query = `
@@ -192,6 +193,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
       FROM ${schema}.memories
       WHERE entity_id = $2
         AND embedding IS NOT NULL
+        AND ($5::text[] IS NULL OR coalesce(status, 'active') = any($5::text[]))
         AND 1 - (embedding <=> $1::vector) >= $3
       ORDER BY embedding <=> $1::vector
       LIMIT $4
@@ -201,7 +203,7 @@ export class PostgresAdapter implements MemoryStorageAdapter {
     const pgvector = await import('pgvector/pg');
     const embeddingValue = pgvector.toSql(embedding);
 
-    const result = await this.client.query(query, [embeddingValue, entityId, threshold, limit]);
+    const result = await this.client.query(query, [embeddingValue, entityId, threshold, limit, statuses ?? null]);
 
     return result.rows.map((row: any) => this.mapRowToMemory(row));
   }

@@ -76,28 +76,26 @@ export async function recordMemoryUse(
   const schema = schemaIdentifier(scope.schema ?? 'memory');
   const decayLambda = scope.decayLambda ?? 0;
   if (!Number.isFinite(decayLambda) || decayLambda < 0) throw new Error('Invalid memory decay');
-  const selected = new Map<string, Receipt & { output: string }>();
+  const selected = new Map<string, Receipt & { output: string; receipt: string }>();
   for (const { receipt, output } of uses) {
     if (typeof receipt !== 'string' || typeof output !== 'string') throw new Error('Invalid memory use report');
     const path = readReceipt(scope, receipt);
     if (!output.trim() || output.length > 300) throw new Error('Identify the work output that used this memory');
     const previous = selected.get(path.memoryId);
     if (!previous || path.edgeIds.length < previous.edgeIds.length)
-      selected.set(path.memoryId, { ...path, output: output.trim() });
+      selected.set(path.memoryId, { ...path, output: output.trim(), receipt });
   }
   const records = [...selected.values()].map(({ memoryId, nodeIds, edgeIds, output }) =>
     ({ memoryId, nodeIds, edgeIds, output }));
   const memoryIds = [...selected.keys()];
   const edgeIds = [...new Set(records.flatMap(record => record.edgeIds))];
-  const usedReceipts = new Set(uses.map(use => use.receipt));
   const protectedEdges = new Set(edgeIds);
   const plan = linkChanges.map(change => {
     if (change?.action !== 'shortcut' && change?.action !== 'weaken' && change?.action !== 'unlink')
       throw new Error('Invalid memory link action');
     const path = readReceipt(scope, change.receipt);
     if (change.action === 'shortcut') {
-      if (path.edgeIds.length < 2 || !usedReceipts.has(change.receipt) ||
-          !path.edgeIds.every(id => protectedEdges.has(id)))
+      if (path.edgeIds.length < 2 || selected.get(path.memoryId)?.receipt !== change.receipt)
         throw new Error('A shortcut requires a contributing multi-hop path from this work');
     } else if (!path.edgeIds.includes(change.edgeId) || protectedEdges.has(change.edgeId) ||
                (change.action === 'weaken' && (!Number.isFinite(change.strength) || change.strength < 0 || change.strength > 1))) {
@@ -147,9 +145,12 @@ export async function recordMemoryUse(
       const result = await db.query(
         `update ${schema}.edges set strength=$3,strength_updated_at=now()
          where entity_id=$1 and id=$2 and type='related'
-           and strength * exp(-$4::double precision * coalesce(
-             greatest(0, extract(epoch from (now() - strength_updated_at)) / 86400), 0
-           )) > $3 returning id`,
+           and case
+             when $3::double precision = 0 then strength > 0
+             when strength > $3 then ln(strength) - ln($3::double precision) >
+               $4::double precision * greatest(0, extract(epoch from (now() - strength_updated_at)) / 86400)
+             else false
+           end returning id`,
         [scope.entityId, change.edgeId, change.strength, decayLambda],
       );
       changes.weakened += result.rowCount ?? 0;

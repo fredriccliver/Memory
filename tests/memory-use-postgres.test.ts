@@ -37,7 +37,7 @@ test('work use reinforces a path and applies a shortcut, weakening and unlink in
       await client.query('update custom_memory.memories set outgoing_edges=array_append(outgoing_edges,$2::uuid) where id=$1',[from,to]);
     }
     const receipt=(memoryId:string,nodeIds:string[],edgeIds:string[])=>issueMemoryUseReceipt(scope,{memoryId,nodeIds,edgeIds,strength:1});
-    await client.query("update custom_memory.edges set strength_updated_at=now()-interval '4 days' where id=$1",[ids.af]);
+    await client.query("update custom_memory.edges set strength_updated_at=now()-interval '800 days' where id=$1",[ids.af]);
     const used=receipt(c,[a,b,c],[ids.ab,ids.bc]);
     const noise=receipt(d,[a,d],[ids.ad]);
     const obsolete=receipt(e,[a,e],[ids.ae]);
