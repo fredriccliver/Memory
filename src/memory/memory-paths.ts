@@ -58,6 +58,7 @@ export async function expandMemoryPaths(
   let frontier = Array.from(seeds, ([memoryId, strength]): MemoryPath =>
     ({ memoryId, nodeIds: [memoryId], edgeIds: [], strength }));
   const paths = new Map(frontier.map(path => [path.memoryId, path]));
+  const expandedStrength = new Map(seeds);
   // Keep the ranker's existing edge activation, even when the target is also a direct seed.
   const activations = new Map<string, MemoryPath>();
   const encountered = new Map<string, MemoryEdge>();
@@ -83,13 +84,17 @@ export async function expandMemoryPaths(
       }
     }
     const ranked = [...next.values()].sort(byStrength);
-    const candidates = ranked.slice(0, MAX_EXPANDED_MEMORIES + seeds.size);
-    truncated ||= candidates.length < ranked.length;
-    const valid = new Set((await storage.getMemoriesByIds(candidates.map(path => path.memoryId)))
-      .filter(memory => canReadMemory(memory, entityId)).map(memory => memory.id));
+    const candidates: MemoryPath[] = [];
+    const capacity = MAX_EXPANDED_MEMORIES + seeds.size;
+    for (let offset = 0; offset < ranked.length && candidates.length <= capacity; offset += capacity) {
+      const batch = ranked.slice(offset, offset + capacity);
+      const valid = new Set((await storage.getMemoriesByIds(batch.map(path => path.memoryId)))
+        .filter(memory => canReadMemory(memory, entityId)).map(memory => memory.id));
+      candidates.push(...batch.filter(path => valid.has(path.memoryId)));
+    }
+    truncated ||= candidates.length > capacity;
     frontier = [];
-    for (const path of candidates) {
-      if (!valid.has(path.memoryId)) continue;
+    for (const path of candidates.slice(0, capacity)) {
       const previous = paths.get(path.memoryId);
       if (!previous && paths.size >= MAX_EXPANDED_MEMORIES + seeds.size) {
         truncated = true;
@@ -97,9 +102,12 @@ export async function expandMemoryPaths(
       }
       const activation = activations.get(path.memoryId);
       if (!activation || byStrength(path, activation) < 0) activations.set(path.memoryId, path);
-      if (seeds.has(path.memoryId) || (previous && byStrength(path, previous) >= 0)) continue;
-      paths.set(path.memoryId, path);
-      frontier.push(path);
+      if (!seeds.has(path.memoryId) && (!previous || byStrength(path, previous) < 0))
+        paths.set(path.memoryId, path);
+      if (path.strength > (expandedStrength.get(path.memoryId) ?? -Infinity)) {
+        expandedStrength.set(path.memoryId, path.strength);
+        frontier.push(path);
+      }
     }
   }
   return { paths: [...paths.values()], activations, encountered, truncated };
