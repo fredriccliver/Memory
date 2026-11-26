@@ -133,6 +133,27 @@ write, or how your conversation is structured — all of that is your prompt. Fo
 tool-style hosts, `writeInstructionParts` returns the same text in pieces for tool
 descriptions.
 
+### Shared client guidance
+
+Author the common OAK Memory guidance in `policy/memory-guidance.mjs`. It keeps
+memory-selection guidance separate from traversal and usage reporting guidance.
+The host supplies the selected store's current policy, records, permissions,
+and output schema.
+
+Desk, the standalone MCP profiles and the hosted MCP bundle generated copies so
+they can start without fetching policy code. From this repository, regenerate
+the consumer modules with:
+
+```sh
+node scripts/sync-memory-guidance.mjs \
+  ../oak-desk/electron/memory-guidance.generated.mjs \
+  ../oak-memory-plugin/src/memory-guidance.generated.ts \
+  ../openaikits.com/src/lib/memory/memory-guidance.generated.ts
+```
+
+Use the same command with `--check` before the paths to verify the copies.
+Use explicit checkout paths when working in separate worktrees.
+
 ### Memory Structure
 
 Each memory is a **node** in a graph structure:
