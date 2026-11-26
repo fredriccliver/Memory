@@ -9,10 +9,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
-    }
+    },
+    "./policy": "./policy/memory-guidance.mjs"
   },
   "files": [
     "dist",
+    "policy",
     "README.md",
     "LICENSE",
     "NOTICE"
